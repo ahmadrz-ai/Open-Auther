@@ -15,7 +15,7 @@ function cfg(overrides: Partial<CavemanConfig> = {}): CavemanConfig {
     ...DEFAULT_CAVEMAN,
     enabled: true,
     baseUrl: "https://summariser.example/v1",
-    apiKey: \"fixture-api-key\",
+    apiKey: "fixture-api-key",
     model: "tiny",
     minTokens: 50,
     ...overrides,
