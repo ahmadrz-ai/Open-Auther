@@ -13,6 +13,7 @@
  */
 
 import { ANTIGRAVITY_DEFAULT_MODELS } from "./antigravity.js";
+import { ProviderRegistry, type ProviderPlugin } from "./provider-registry.js";
 import { WEB_COOKIE_BY_ID } from "./webcookie.js";
 import type { ProviderType } from "../pool/types.js";
 
@@ -197,7 +198,7 @@ export function providerDef(id: string): ProviderDef | null {
     };
   }
 
-  return PROVIDER_BY_ID.get(id) ?? null;
+  return BUILTIN_PROVIDER_REGISTRY.get(id)?.definition ?? null;
 }
 
 /** Everything the Add Provider page renders, in display order. */
@@ -206,6 +207,20 @@ export const ALL_PROVIDERS: ProviderDef[] = [
   ANTIGRAVITY_PROVIDER,
   CODEX_PROVIDER,
 ];
+
+/** Built-in providers exposed through the same contract as external plugins. */
+export const BUILTIN_PROVIDER_PLUGINS: ProviderPlugin[] = ALL_PROVIDERS.map((definition) => ({
+  id: definition.id,
+  definition,
+}));
+
+/** Shared registry used by applications that want built-ins plus extensions. */
+export const BUILTIN_PROVIDER_REGISTRY = new ProviderRegistry(BUILTIN_PROVIDER_PLUGINS);
+
+/** Provider definitions currently registered, including runtime plugins. */
+export function providerDefs(): ProviderDef[] {
+  return BUILTIN_PROVIDER_REGISTRY.list().map((plugin) => plugin.definition);
+}
 
 /**
  * Best-effort provider id for a credential stored before `provider_id` existed.

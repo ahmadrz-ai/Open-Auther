@@ -13,17 +13,28 @@ Open-Auther is a local OpenAI-compatible gateway that routes chat requests throu
 npm install open-auther
 ```
 
-Run the gateway:
+Run the gateway from a local install:
 
 ```bash
 npx open-auther
 ```
+
+The package provides both command spellings:
+
+```text
+open-auther   canonical command
+openauther    compatibility alias
+```
+
+A local `npm install open-auther` does not place the command on your global PATH. Use `npx`, or install globally.
 
 Or install the CLI globally:
 
 ```bash
 npm install --global open-auther
 open-auther
+# compatibility alias:
+openauther
 ```
 
 Check the installed version:
@@ -44,6 +55,7 @@ open-auther auth import <file>      Import credentials from JSON
 open-auther auth list               List configured accounts
 open-auther auth revive <id>        Re-enable a dead credential
 open-auther auth remove <id>        Remove a credential
+open-auther providers list          List registered providers
 open-auther key show|new            Show or create gateway API keys
 ```
 

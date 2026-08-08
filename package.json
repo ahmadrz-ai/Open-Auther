@@ -1,6 +1,6 @@
 {
   "name": "open-auther",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Professional-grade authentication and model routing library",
   "keywords": [
     "openai-compatible",
@@ -18,14 +18,28 @@
     "type": "git",
     "url": "git+https://github.com/ahmadrz-ai/Open-Auther.git"
   },
-  "main": "dist/cli.js",
-  "module": "dist/cli.mjs",
-  "types": "dist/cli.d.ts",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.mjs",
+      "require": "./dist/cli.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
-    "open-auther": "dist/cli.js"
+    "open-auther": "dist/cli.js",
+    "openauther": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup src/cli.ts --format cjs,esm --dts --clean && node scripts/copy-ui.mjs",
+    "build": "tsup src/cli.ts src/index.ts --format cjs,esm --dts --clean && node scripts/copy-ui.mjs",
     "test": "vitest run",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm run build && npm run test"

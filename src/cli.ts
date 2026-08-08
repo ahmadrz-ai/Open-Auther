@@ -8,15 +8,18 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { serve } from "@hono/node-server";
+import packageJson from "../package.json";
 import { createApp } from "./api/app.js";
 import { loadConfig, generateGatewayKey, type Config } from "./config.js";
 import { now, openDatabase, type Database } from "./db.js";
 import { configureLogging, createLogger, maskEmail } from "./logging.js";
 import { beginLogin, openBrowser } from "./core/login.js";
 import { importCredentials } from "./core/import.js";
+import { providerSummaries } from "./core/provider-registry.js";
+import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
-const VERSION = "1.0.0";
+const VERSION = packageJson.version;
 
 const C = {
   reset: "[0m",
@@ -267,6 +270,27 @@ function cmdStatus(): void {
   cmdAuthList();
 }
 
+function cmdProviders(args: string[]): void {
+  const sub = args[0] ?? "list";
+  if (sub !== "list" && sub !== "ls") {
+    out(`${C.red}Unknown:${C.reset} open-auther providers ${sub}`);
+    process.exit(1);
+  }
+
+  const providers = providerSummaries(BUILTIN_PROVIDER_REGISTRY);
+  out();
+  out(`  ${C.bold}Registered providers${C.reset}`);
+  out(`  ${C.dim}${"ID".padEnd(16)}${"AUTH".padEnd(18)}MODELS${C.reset}`);
+  for (const provider of providers) {
+    out(
+      `  ${provider.id.padEnd(16)}` +
+        `${provider.auth.join(",").padEnd(18)}` +
+        `${provider.models.length}${provider.listsModels ? " + discovery" : ""}`,
+    );
+  }
+  out();
+}
+
 // ----------------------------------------------------------------- key mgmt
 
 function cmdKey(args: string[]): void {
@@ -331,6 +355,7 @@ function usage(): void {
     open-auther auth list               List accounts
     open-auther auth revive <id>        Return a dead credential to rotation
     open-auther auth remove <id>        Delete a credential
+    open-auther providers list          List registered providers
     open-auther key show|new            Gateway API keys
 
   ${C.bold}Environment${C.reset}
@@ -352,6 +377,7 @@ async function main(): Promise<void> {
 
   if (!cmd || cmd === "serve") return cmdServe();
   if (cmd === "status") return cmdStatus();
+  if (cmd === "providers") return cmdProviders(argv.slice(1));
   if (cmd === "key") return cmdKey(argv.slice(1));
 
   if (cmd === "auth") {

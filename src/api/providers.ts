@@ -12,7 +12,7 @@ import type { Config } from "../config.js";
 import { now } from "../db.js";
 import { createLogger } from "../logging.js";
 import { isChatModel, looksFree } from "../core/catalogue.js";
-import { ALL_PROVIDERS, providerDef } from "../core/providers.js";
+import { providerDef, providerDefs } from "../core/providers.js";
 import {
   credentialInstructions,
   extractWebCredential,
@@ -86,7 +86,7 @@ export function providerRoutes(
   /** Everything the Add Provider page needs to render itself. */
   app.get("/catalogue", (c) => {
     const creds = store.all();
-    const defs = ALL_PROVIDERS;
+    const defs = providerDefs();
 
     return c.json({
       providers: defs.map((def) => {
