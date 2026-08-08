@@ -15,6 +15,7 @@ import { now, openDatabase, type Database } from "./db.js";
 import { configureLogging, createLogger, maskEmail } from "./logging.js";
 import { beginLogin, openBrowser } from "./core/login.js";
 import { importCredentials } from "./core/import.js";
+import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
@@ -270,8 +271,36 @@ function cmdStatus(): void {
   cmdAuthList();
 }
 
+function providerHealthColor(health: string): string {
+  return health === "ready" ? C.green : health === "degraded" ? C.yellow : health === "offline" ? C.red : C.dim;
+}
+
 function cmdProviders(args: string[]): void {
   const sub = args[0] ?? "list";
+  if (sub === "status") {
+    const { store } = bootstrap();
+    const statuses = buildProviderStatus(BUILTIN_PROVIDER_REGISTRY, store.all());
+    if (args.includes("--json")) {
+      out(JSON.stringify({ version: VERSION, providers: statuses }, null, 2));
+      return;
+    }
+
+    out();
+    out(`  ${C.bold}Provider status${C.reset}`);
+    out(`  ${C.dim}${"ID".padEnd(16)}${"STATE".padEnd(14)}${"POOL".padEnd(12)}${"MODELS".padEnd(9)}DISCOVERY${C.reset}`);
+    for (const provider of statuses) {
+      const pool = `${provider.available}/${provider.configured}`;
+      out(
+        `  ${provider.id.padEnd(16)}` +
+          `${providerHealthColor(provider.health)}${provider.health.padEnd(14)}${C.reset}` +
+          `${pool.padEnd(12)}${String(provider.models.length).padEnd(9)}` +
+          `${provider.discoverable ? `${C.green}yes${C.reset}` : `${C.dim}no${C.reset}`}`,
+      );
+    }
+    out();
+    return;
+  }
+
   if (sub !== "list" && sub !== "ls") {
     out(`${C.red}Unknown:${C.reset} open-auther providers ${sub}`);
     process.exit(1);
@@ -289,6 +318,35 @@ function cmdProviders(args: string[]): void {
     );
   }
   out();
+}
+
+function cmdDoctor(args: string[]): void {
+  const { cfg, store } = bootstrap();
+  const report = buildDoctorReport(cfg, BUILTIN_PROVIDER_REGISTRY, store.all());
+  if (args.includes("--json")) {
+    out(JSON.stringify({ version: VERSION, ...report }, null, 2));
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
+
+  out();
+  out(`  ${C.bold}open-auther doctor${C.reset} ${report.ok ? `${C.green}ready${C.reset}` : `${C.red}attention required${C.reset}`}`);
+  out(`  ${C.dim}${"CHECK".padEnd(22)}STATUS  DETAILS${C.reset}`);
+  for (const check of report.checks) {
+    const color = check.level === "pass" ? C.green : check.level === "warn" ? C.yellow : C.red;
+    const mark = check.level === "pass" ? "PASS" : check.level.toUpperCase();
+    out(`  ${check.label.padEnd(22)}${color}${mark.padEnd(8)}${C.reset}${check.message}`);
+  }
+  out();
+  out(`  ${C.dim}Provider summary:${C.reset}`);
+  for (const provider of report.providers.filter((item) => item.configured > 0)) {
+    out(`    ${provider.id.padEnd(16)}${providerHealthColor(provider.health)}${provider.health}${C.reset}  ${provider.available}/${provider.configured} available`);
+  }
+  if (!report.providers.some((item) => item.configured > 0)) {
+    out(`    ${C.dim}No provider connections configured yet.${C.reset}`);
+  }
+  out();
+  if (!report.ok) process.exitCode = 1;
 }
 
 // ----------------------------------------------------------------- key mgmt
@@ -356,6 +414,10 @@ function usage(): void {
     open-auther auth revive <id>        Return a dead credential to rotation
     open-auther auth remove <id>        Delete a credential
     open-auther providers list          List registered providers
+    open-auther providers status        Show live provider health and pool state
+    open-auther providers status --json Machine-readable provider status
+    open-auther doctor                  Diagnose local gateway readiness
+    open-auther doctor --json           Machine-readable diagnostics
     open-auther key show|new            Gateway API keys
 
   ${C.bold}Environment${C.reset}
@@ -377,6 +439,7 @@ async function main(): Promise<void> {
 
   if (!cmd || cmd === "serve") return cmdServe();
   if (cmd === "status") return cmdStatus();
+  if (cmd === "doctor") return cmdDoctor(argv.slice(1));
   if (cmd === "providers") return cmdProviders(argv.slice(1));
   if (cmd === "key") return cmdKey(argv.slice(1));
 

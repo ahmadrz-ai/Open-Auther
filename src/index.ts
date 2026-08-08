@@ -25,13 +25,18 @@ export type { ProviderPlugin, ProviderSummary } from "./core/provider-registry.j
 export { buildCatalogue, isChatModel, looksFree } from "./core/catalogue.js";
 export type { BuildOptions, CatalogueEntry } from "./core/catalogue.js";
 
+export { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
+export type { DoctorCheck, DoctorReport, DiagnosticLevel, ProviderHealth, ProviderStatus } from "./core/diagnostics.js";
+
 export {
   BUILTIN_CAPABILITIES,
   capabilitiesFor,
   coerceCapabilities,
+  meetsRequirements,
+  requirementsForRequest,
   DEFAULT_REASONING,
   isReasoningLevel,
   REASONING_LEVELS,
   UNKNOWN_MODEL,
 } from "./core/capabilities.js";
-export type { ModelCapabilities, ReasoningLevel } from "./core/capabilities.js";
+export type { CapabilityRequirements, CapabilityRequest, ModelCapabilities, ReasoningLevel } from "./core/capabilities.js";

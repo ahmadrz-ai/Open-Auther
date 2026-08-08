@@ -12,7 +12,8 @@ import type { Config } from "../config.js";
 import { now } from "../db.js";
 import { createLogger } from "../logging.js";
 import { isChatModel, looksFree } from "../core/catalogue.js";
-import { providerDef, providerDefs } from "../core/providers.js";
+import { providerDef, providerDefs, BUILTIN_PROVIDER_REGISTRY } from "../core/providers.js";
+import { buildProviderStatus } from "../core/diagnostics.js";
 import {
   credentialInstructions,
   extractWebCredential,
@@ -80,6 +81,10 @@ export function providerRoutes(
   router: Router,
 ): Hono {
   const app = new Hono();
+
+  app.get("/status", (c) =>
+    c.json({ providers: buildProviderStatus(BUILTIN_PROVIDER_REGISTRY, store.all(), now()) }),
+  );
 
   // ------------------------------------------------------------ catalogue
 

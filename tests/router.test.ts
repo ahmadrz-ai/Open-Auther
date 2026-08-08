@@ -150,6 +150,54 @@ describe("router failover", () => {
     expect(store.available()).toHaveLength(2);
   });
 
+  it("rejects a direct model before upstream when it lacks requested vision", async () => {
+    const store = makeStore();
+    store.add(credentialInput({ customModels: ["o3-mini"] }));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      {
+        model: "o3-mini",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "describe" }, { type: "image_url", image_url: { url: "data:image/png;base64,test" } }],
+          },
+        ],
+      },
+      new AbortController().signal,
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.code).toBe("model_capability_mismatch");
+    expect(outcome.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("filters incapable candidates before ranking a virtual model", async () => {
+    const store = makeStore();
+    store.add(credentialInput({ customModels: ["o3-mini"] }));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      {
+        model: "fast",
+        messages: [
+          { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,test" } }] },
+        ],
+      },
+      new AbortController().signal,
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.code).toBe("no_model_available");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("says no provider can serve the model, rather than blaming rate limits", async () => {
     const store = makeStore();
     store.add(

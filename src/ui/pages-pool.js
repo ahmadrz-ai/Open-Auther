@@ -33,8 +33,25 @@ export const home = {
     const hasAuths = (s?.summary.total ?? 0) > 0;
 
     host.innerHTML = `
-      <div class="page">
-        ${card("Get connected", "bolt", `
+      <div class="page home-page">
+            <section class="home-command">
+              <div class="home-command-copy">
+                <div class="eyebrow"><span class="eyebrow-dot"></span> OPEN-AUTHER / CONTROL PLANE</div>
+                <h2>Route with confidence.</h2>
+                <p>One local gateway for provider pools, intelligent rotation, and transparent operations.</p>
+              </div>
+              <div class="home-command-side">
+                <div class="command-status">
+                  <span>RUNTIME STATE</span>
+                  <strong class="${hasAuths ? "ready" : "standby"}">${hasAuths ? "OPERATIONAL" : "READY TO CONNECT"}</strong>
+                </div>
+                <div class="command-actions">
+                  <a class="btn btn-primary btn-sm" href="#/add">${icon("add", 15)} Add provider</a>
+                  <a class="btn btn-sm" href="#/health">${icon("health", 15)} Inspect health</a>
+                </div>
+              </div>
+            </section>
+            ${card("Get connected", "bolt", `
           <div class="steps">
             <div class="step ${state.key ? "done" : ""}">
               <div class="step-n">1</div>
@@ -69,6 +86,8 @@ export const home = {
           </div>`)}
 
         <div class="grid-4" id="home-stats"></div>
+
+        ${card("Provider mesh", "hub", `<div class="provider-grid" id="provider-grid"><div class="empty">Loading provider health…</div></div>`, `<a class="btn btn-sm" href="#/add">Manage providers</a>`, "Live readiness across registered providers.")}
 
         ${card("Pool topology", "hub", `
           <div class="stage">
@@ -129,6 +148,22 @@ export const home = {
         <div class="stat accent"><div class="stat-value">${compact(st.summary.tokensServed)}</div><div class="stat-label">Tokens</div></div>`;
     };
 
+    const renderProviders = async () => {
+      const grid = host.querySelector("#provider-grid");
+      if (!grid) return;
+      try {
+        const data = await get("/admin/providers/status");
+        grid.innerHTML = data.providers.map((provider) => `
+          <a class="provider-tile ${esc(provider.health)}" href="#/connections" title="Open connections">
+            <span class="provider-tile-head"><span class="provider-dot"></span><b>${esc(provider.label)}</b><span class="provider-state">${esc(provider.health)}</span></span>
+            <span class="provider-tile-meta"><span>${provider.available}/${provider.configured} ready</span><span>${provider.models.length} models</span></span>
+            <span class="provider-tile-track"><i style="width:${provider.configured ? Math.min(100, (provider.available / provider.configured) * 100) : 0}%"></i></span>
+          </a>`).join("");
+      } catch {
+        grid.innerHTML = `<div class="empty">Provider health is unavailable. Open Health for details.</div>`;
+      }
+    };
+
     const onStatus = () => {
       const st = ctx.status;
       graph.sync(st?.credentials ?? []);
@@ -146,8 +181,10 @@ export const home = {
 
     onStatus();
     renderFeed();
+    renderProviders();
+    const providersTimer = setInterval(renderProviders, 15000);
 
-    return { onStatus, onEvent, destroy: () => graph.stop() };
+    return { onStatus, onEvent, destroy: () => { graph.stop(); clearInterval(providersTimer); } };
   },
 };
 

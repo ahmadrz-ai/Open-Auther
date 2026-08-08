@@ -15,6 +15,7 @@ import { now } from "./db.js";
 import { createLogger, maskEmail } from "./logging.js";
 import { RefreshError, ensureFreshToken } from "./core/refresh.js";
 import { buildCatalogue } from "./core/catalogue.js";
+import { capabilitiesFor, meetsRequirements, requirementsForRequest, type CapabilityRequirements } from "./core/capabilities.js";
 import { isVirtualModel, orderCandidates, type Candidate, type VirtualModel } from "./core/virtual.js";
 import { canServe, selectCredential } from "./pool/selector.js";
 import type { CredentialStore } from "./pool/store.js";
@@ -49,6 +50,14 @@ export type RouteOutcome = RouteSuccess | RouteFailure;
 /** Events that mean the model has actually started answering. */
 function isContent(ev: CodexEvent): boolean {
   return ev.kind === "text" || ev.kind === "tool_call" || ev.kind === "reasoning";
+}
+
+function capabilityLabels(requirements: CapabilityRequirements): string[] {
+  return [
+    requirements.vision ? "vision" : null,
+    requirements.tools ? "tools" : null,
+    requirements.reasoning ? "reasoning" : null,
+  ].filter((value): value is string => value !== null);
 }
 
 export class Router {
@@ -112,9 +121,10 @@ export class Router {
     signal: AbortSignal,
     opts: { tags?: string[]; sticky?: string | null },
   ): Promise<RouteOutcome> {
+    const requirements = requirementsForRequest(req);
     const ordered = orderCandidates(
       virtual,
-      this.candidatePairs(opts.tags),
+      this.candidatePairs(opts.tags, requirements),
       this.cfg.modelCapabilities,
       opts.sticky ?? null,
     );
@@ -194,7 +204,7 @@ export class Router {
   }
 
   /** Every (credential, model) pair that could serve a request right now. */
-  private candidatePairs(tags?: string[]): Candidate[] {
+  private candidatePairs(tags?: string[], requirements?: CapabilityRequirements): Candidate[] {
     const at = now();
     this.store.wakeExpired(at);
 
@@ -206,6 +216,12 @@ export class Router {
         continue;
       }
       for (const entry of buildCatalogue([credential], { freeOnly: this.cfg.freeModelsOnly })) {
+        if (
+          requirements &&
+          !meetsRequirements(capabilitiesFor(entry.id, this.cfg.modelCapabilities), requirements)
+        ) {
+          continue;
+        }
         out.push({ credential, model: entry.id });
       }
     }
@@ -311,6 +327,23 @@ export class Router {
      */
     if (isVirtualModel(req.model)) {
       return await this.chatVirtual(req.model, req, signal, opts);
+    }
+
+    const requirements = requirementsForRequest(req);
+    const capabilities = capabilitiesFor(req.model, this.cfg.modelCapabilities);
+    if (!meetsRequirements(capabilities, requirements)) {
+      const required = capabilityLabels(requirements).join(", ");
+      return {
+        ok: false,
+        status: 400,
+        code: "model_capability_mismatch",
+        message:
+          `Model "${req.model}" cannot satisfy this request. ` +
+          `Required capabilities: ${required || "none"}. ` +
+          `Choose a compatible model or configure a capability override.`,
+        retryAt: null,
+        attempts: 0,
+      };
     }
 
     const body = toCodexRequest(req);

@@ -233,3 +233,45 @@ export function coerceCapabilities(raw: unknown): Partial<ModelCapabilities> {
   }
   return out;
 }
+
+export interface CapabilityRequirements {
+  vision: boolean;
+  tools: boolean;
+  reasoning: boolean;
+}
+
+/** Minimal request shape used by the capability gate. */
+export interface CapabilityRequest {
+  messages?: Array<{ content?: unknown }>;
+  tools?: unknown[];
+  reasoning_effort?: unknown;
+}
+
+function containsVisionPart(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => {
+    if (!part || typeof part !== "object") return false;
+    const p = part as Record<string, unknown>;
+    return p.type === "image_url" || p.type === "input_image" || p.image_url !== undefined;
+  });
+}
+
+/** Infer the minimum model capabilities required by an incoming request. */
+export function requirementsForRequest(request: CapabilityRequest): CapabilityRequirements {
+  return {
+    vision: (request.messages ?? []).some((message) => containsVisionPart(message.content)),
+    tools: Array.isArray(request.tools) && request.tools.length > 0,
+    reasoning: typeof request.reasoning_effort === "string" && request.reasoning_effort.length > 0,
+  };
+}
+
+/** Return false when a known model cannot satisfy a request requirement. */
+export function meetsRequirements(
+  capabilities: ModelCapabilities,
+  requirements: CapabilityRequirements,
+): boolean {
+  if (requirements.vision && !capabilities.vision) return false;
+  if (requirements.tools && !capabilities.tools) return false;
+  if (requirements.reasoning && !capabilities.reasoning) return false;
+  return true;
+}

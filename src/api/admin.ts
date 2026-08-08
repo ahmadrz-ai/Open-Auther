@@ -9,6 +9,7 @@
 
 import { hostname, platform, totalmem, freemem, cpus } from "node:os";
 import { Hono, type Context } from "hono";
+import packageJson from "../../package.json";
 import { streamSSE } from "hono/streaming";
 import {
   addGatewayKey,
@@ -32,7 +33,7 @@ import type { LoginSessions } from "./oauth.js";
 import { testAllCredentials, testCredential } from "./testconn.js";
 
 const STARTED_AT = Date.now();
-export const VERSION = "0.2.0";
+export const VERSION = packageJson.version;
 
 export interface PoolSummary {
   total: number;
