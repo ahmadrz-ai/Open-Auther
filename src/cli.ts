@@ -17,6 +17,7 @@ import { beginLogin, openBrowser } from "./core/login.js";
 import { importCredentials } from "./core/import.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
+import { detectEndpoint } from "./upstream/detect.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
@@ -275,8 +276,74 @@ function providerHealthColor(health: string): string {
   return health === "ready" ? C.green : health === "degraded" ? C.yellow : health === "offline" ? C.red : C.dim;
 }
 
-function cmdProviders(args: string[]): void {
+async function cmdProvidersDiscover(args: string[]): Promise<void> {
+  const { store } = bootstrap();
+  const json = args.includes("--json");
+  const idArg = args.find((arg) => /^\d+$/.test(arg));
+  const id = idArg ? Number.parseInt(idArg, 10) : null;
+  const credentials = store
+    .all()
+    .filter((credential) => id === null || credential.id === id);
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const credential of credentials) {
+    if (!credential.baseUrl || !credential.accessToken) {
+      results.push({
+        credentialId: credential.id,
+        providerId: credential.providerId,
+        ok: false,
+        skipped: true,
+        message: "No discoverable base URL or access token is stored.",
+      });
+      continue;
+    }
+
+    const detection = await detectEndpoint(credential.baseUrl, credential.accessToken, {
+      model: credential.customModels?.[0] ?? null,
+      timeoutMs: 15_000,
+    });
+
+    if (detection.ok && detection.baseUrl) {
+      store.setBaseUrl(credential.id, detection.baseUrl);
+      if (detection.models.length) store.setCustomModels(credential.id, detection.models);
+    }
+
+    results.push({
+      credentialId: credential.id,
+      providerId: credential.providerId,
+      ok: detection.ok,
+      skipped: false,
+      baseUrl: detection.baseUrl,
+      models: detection.models,
+      via: detection.via,
+      attempts: detection.attempts.length,
+      message: detection.message,
+    });
+  }
+
+  if (json) {
+    out(JSON.stringify({ version: VERSION, checked: results.length, results }, null, 2));
+    return;
+  }
+
+  out();
+  out(`  ${C.bold}Provider discovery${C.reset}`);
+  if (results.length === 0) {
+    out(`  ${C.dim}No credentials found. Add a provider before running live discovery.${C.reset}`);
+  }
+  for (const result of results) {
+    const status = result.skipped ? `${C.dim}SKIP${C.reset}` : result.ok ? `${C.green}OK${C.reset}` : `${C.red}FAIL${C.reset}`;
+    out(`  #${String(result.credentialId).padEnd(4)} ${String(result.providerId).padEnd(16)} ${status} ${String(result.message)}`);
+    if (result.ok && result.baseUrl) {
+      out(`       ${C.dim}${result.baseUrl} · ${String((result.models as string[]).length)} models · ${String(result.via)}${C.reset}`);
+    }
+  }
+  out();
+}
+
+async function cmdProviders(args: string[]): Promise<void> {
   const sub = args[0] ?? "list";
+  if (sub === "discover") return cmdProvidersDiscover(args.slice(1));
   if (sub === "status") {
     const { store } = bootstrap();
     const statuses = buildProviderStatus(BUILTIN_PROVIDER_REGISTRY, store.all());
@@ -416,6 +483,8 @@ function usage(): void {
     open-auther providers list          List registered providers
     open-auther providers status        Show live provider health and pool state
     open-auther providers status --json Machine-readable provider status
+    open-auther providers discover     Probe and persist provider endpoint/model metadata
+    open-auther providers discover --json Machine-readable discovery results
     open-auther doctor                  Diagnose local gateway readiness
     open-auther doctor --json           Machine-readable diagnostics
     open-auther key show|new            Gateway API keys

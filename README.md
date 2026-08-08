@@ -56,8 +56,17 @@ open-auther auth list               List configured accounts
 open-auther auth revive <id>        Re-enable a dead credential
 open-auther auth remove <id>        Remove a credential
 open-auther providers list          List registered providers
+open-auther providers status        Show live provider health and pool state
+open-auther providers status --json Machine-readable provider status
+open-auther providers discover      Probe and persist endpoint/model metadata
+open-auther providers discover --json
+                                    Machine-readable discovery results
+open-auther doctor                  Diagnose local gateway readiness
+open-auther doctor --json           Machine-readable diagnostics
 open-auther key show|new            Show or create gateway API keys
 ```
+
+The router rejects known capability mismatches before sending an upstream request. Vision, tool, and reasoning requirements are inferred from the request; virtual models such as `fast` and `quality` only rank candidates that can satisfy those requirements. Unknown models remain usable for ordinary text requests and can be made explicit through capability overrides.
 
 ## Configuration
 
