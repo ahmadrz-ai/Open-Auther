@@ -1,0 +1,88 @@
+# Open-Auther
+
+Open-Auther is a local OpenAI-compatible gateway that routes chat requests through a pool of OAuth, API-key, and web-session providers. It includes credential rotation, failover, model discovery, request logs, health monitoring, and a browser dashboard.
+
+## Requirements
+
+- Node.js `22.5.0` or newer
+- A provider credential for the upstream service you want to use
+
+## Install from npm
+
+```bash
+npm install open-auther
+```
+
+Run the gateway:
+
+```bash
+npx open-auther
+```
+
+Or install the CLI globally:
+
+```bash
+npm install --global open-auther
+open-auther
+```
+
+Check the installed version:
+
+```bash
+npx open-auther --version
+```
+
+The CLI prints the local OpenAI-compatible base URL, gateway API key, and dashboard URL when it starts.
+
+## CLI commands
+
+```text
+open-auther [serve]                 Start the gateway and dashboard
+open-auther status                  Show pool summary
+open-auther auth login [--label X]  Add an OAuth account
+open-auther auth import <file>      Import credentials from JSON
+open-auther auth list               List configured accounts
+open-auther auth revive <id>        Re-enable a dead credential
+open-auther auth remove <id>        Remove a credential
+open-auther key show|new            Show or create gateway API keys
+```
+
+## Configuration
+
+Environment variables use the `AI_AUTHER_` prefix for compatibility with existing installations:
+
+```text
+AI_AUTHER_HOME        Data directory (default: ~/.open-auther)
+AI_AUTHER_PORT        Listen port (default: 8787)
+AI_AUTHER_HOST        Bind address (default: 127.0.0.1)
+AI_AUTHER_API_KEY     Override the gateway API key
+AI_AUTHER_ROTATION    fill_first | round_robin | least_used | random
+AI_AUTHER_LOG_LEVEL   debug | info | warn | error
+```
+
+The default API endpoint is:
+
+```text
+http://127.0.0.1:8787/v1
+```
+
+Treat the data directory as sensitive. It can contain OAuth tokens and gateway credentials.
+
+## Development
+
+```bash
+npm install
+npm run build
+npm run test
+npm run pack:check
+```
+
+The build copies the dashboard and the supplied Open-Auther logo into `dist/ui`. The package is tested as both a bundled CLI and an installable npm package.
+
+## Security
+
+Read [SECURITY.md](SECURITY.md) before reporting a security issue. Never commit OAuth tokens, API keys, database files, or local configuration.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

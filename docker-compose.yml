@@ -1,0 +1,19 @@
+services:
+  ai-auther:
+    build: .
+    # Published to loopback only. Changing this to "8787:8787" exposes the
+    # gateway on every interface — read the exposure notes in the README first.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ai-auther-data:/data
+    environment:
+      # Set this to pin a known key instead of using the generated one.
+      # AI_AUTHER_API_KEY: "aia-..."
+      AI_AUTHER_ROTATION: fill_first
+      AI_AUTHER_LOG_LEVEL: info
+    restart: unless-stopped
+
+volumes:
+  # Holds live OAuth tokens. Back it up only somewhere you would keep an SSH key.
+  ai-auther-data:

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Open-Auther</title>
+<link rel="stylesheet" href="/assets/styles.css" />
+<link rel="icon" type="image/png" href="/assets/logo.png?v=1.0.0" />
+</head>
+<body>
+
+<!-- Shown until a gateway key is present. -->
+<div id="gate" class="gate" hidden>
+  <form class="gate-card" id="gate-form">
+    <h1>Open-Auther</h1>
+    <p>Paste the gateway API key printed when the server started.</p>
+    <input id="gate-key" type="password" placeholder="aia-…" autocomplete="off" spellcheck="false" />
+    <button type="submit" class="btn-primary" style="justify-content:center">Connect</button>
+    <p class="gate-error" hidden id="gate-error"></p>
+    <p class="gate-hint">
+      The CLI prints a dashboard link with the key already in the URL fragment —
+      opening that link signs you in automatically.
+    </p>
+  </form>
+</div>
+
+<div id="app" hidden>
+
+  <aside class="rail">
+    <div class="rail-brand">
+      <img class="rail-logo" src="/assets/logo.png?v=1.0.0" width="30" height="30" alt="Open-Auther" decoding="async" />
+      <span class="rail-title">Open-Auther<span class="rail-version" id="rail-version">v1.0.0</span></span>
+    </div>
+
+    <nav class="rail-nav" id="rail-nav"></nav>
+
+    <div class="rail-foot">
+      <span class="conn" id="conn" data-state="connecting"><i></i><span>connecting</span></span>
+    </div>
+  </aside>
+
+  <header class="top">
+    <div class="top-title">
+      <h1 id="page-title">Home</h1>
+      <p id="page-sub"></p>
+    </div>
+    <div class="pills" id="pills"></div>
+  </header>
+
+  <main class="main" id="main"></main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="/assets/app.js" type="module"></script>
+</body>
+</html>

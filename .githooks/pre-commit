@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# Block credentials from ever entering the repository.
+#
+# This project's worst failure mode is a leaked OAuth token, so the hook is
+# deliberately blunt: it would rather block a legitimate commit than let a
+# credential through. Override with `git commit --no-verify` only when you are
+# certain, and look at what you are overriding first.
+
+set -eu
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+status=0
+
+fail() {
+  printf '\033[31mpre-commit: %s\033[0m\n' "$1" >&2
+  status=1
+}
+
+# --- files that must never be committed at all ----------------------------
+for file in $staged; do
+  case "$file" in
+    *.db|*.db-wal|*.db-shm|*.sqlite|*.sqlite3)
+      fail "$file is a database file and may contain live OAuth tokens." ;;
+    config.json|*/config.json|auth.json|*/auth.json)
+      fail "$file may contain gateway keys or OAuth tokens." ;;
+    .env|.env.*)
+      case "$file" in
+        .env.example) : ;;
+        *) fail "$file is an environment file." ;;
+      esac ;;
+    *.pem|*.key)
+      fail "$file looks like private key material." ;;
+  esac
+done
+
+# --- content scan ----------------------------------------------------------
+# Scanned against the staged content, not the working tree, so a last-second
+# `git add -p` cannot slip something past.
+for file in $staged; do
+  case "$file" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.pdf|package-lock.json) continue ;;
+  esac
+
+  content=$(git show ":$file" 2>/dev/null || true)
+  [ -z "$content" ] && continue
+
+  # A real JWT: three base64url segments starting with the `{"alg"` prefix.
+  # Test fixtures build these at runtime, so none should ever be literal.
+  if printf '%s' "$content" | grep -Eq 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'; then
+    fail "$file contains something shaped like a JWT."
+  fi
+
+  if printf '%s' "$content" | grep -Eq '\b(sk|rk)-[A-Za-z0-9_-]{20,}'; then
+    fail "$file contains something shaped like an API key."
+  fi
+
+  # Gateway keys issued by this project.
+  if printf '%s' "$content" | grep -Eq '\baia-[A-Za-z0-9_-]{24,}'; then
+    fail "$file contains something shaped like an ai-auther gateway key."
+  fi
+
+  # A key in a query string is the specific bug this project exists to avoid.
+  if printf '%s' "$content" | grep -Eq '[?&](api_?key|access_?token|refresh_?token|key|secret)=[A-Za-z0-9_-]{8,}'; then
+    fail "$file puts a credential in a URL query string. Use a header."
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  printf '\033[33mCommit blocked. If this is a false positive, review it, then use --no-verify.\033[0m\n' >&2
+fi
+
+exit "$status"

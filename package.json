@@ -1,0 +1,52 @@
+{
+  "name": "open-auther",
+  "version": "1.0.0",
+  "description": "Professional-grade authentication and model routing library",
+  "keywords": [
+    "openai-compatible",
+    "oauth",
+    "model-router",
+    "gateway",
+    "chatgpt",
+    "codex"
+  ],
+  "homepage": "https://github.com/ahmadrz-ai/Open-Auther#readme",
+  "bugs": {
+    "url": "https://github.com/ahmadrz-ai/Open-Auther/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahmadrz-ai/Open-Auther.git"
+  },
+  "main": "dist/cli.js",
+  "module": "dist/cli.mjs",
+  "types": "dist/cli.d.ts",
+  "bin": {
+    "open-auther": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup src/cli.ts --format cjs,esm --dts --clean && node scripts/copy-ui.mjs",
+    "test": "vitest run",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "@types/node": "^26.2.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "hono": "^4.13.1"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

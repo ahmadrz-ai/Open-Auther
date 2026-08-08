@@ -1,0 +1,32 @@
+# --- credentials and live state -------------------------------------------
+# These hold OAuth access/refresh tokens. Never commit them.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+config.json
+auth.json
+credentials*.json
+tokens*.json
+.ai-auther/
+*.pem
+*.key
+
+# --- environment -----------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- build -----------------------------------------------------------------
+dist/
+node_modules/
+*.tsbuildinfo
+coverage/
+
+# --- editors / OS ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
