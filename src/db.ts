@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 12;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -244,7 +244,15 @@ const MIGRATIONS: string[] = [
 ];
 
 export function openDatabase(path: string): Database {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  if (path !== ":memory:") {
+    const directory = dirname(path);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(directory, 0o700);
+    } catch {
+      // Windows and filesystems without POSIX modes may ignore this.
+    }
+  }
 
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL;");
@@ -252,7 +260,12 @@ export function openDatabase(path: string): Database {
   db.exec("PRAGMA busy_timeout = 5000;");
   db.exec("PRAGMA synchronous = NORMAL;");
 
-  migrate(db);
+  try {
+    migrate(db);
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 
   if (path !== ":memory:") {
     // The database holds live OAuth tokens. Treat it like an SSH private key.
@@ -269,10 +282,13 @@ export function openDatabase(path: string): Database {
 
 function migrate(db: Database): void {
   db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);");
-  const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
-    | { version: number }
-    | undefined;
-  let current = row?.version ?? 0;
+  const rows = db.prepare("SELECT version FROM schema_version ORDER BY rowid").all() as Array<{
+    version: number;
+  }>;
+  if (rows.length > 1 || (rows[0] && (!Number.isInteger(rows[0].version) || rows[0].version < 0))) {
+    throw new Error("Invalid schema version metadata; refusing to use the database.");
+  }
+  let current = rows[0]?.version ?? 0;
 
   if (current > SCHEMA_VERSION) {
     throw new Error(

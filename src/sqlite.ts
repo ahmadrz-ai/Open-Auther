@@ -13,14 +13,13 @@
  */
 
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
-const require = createRequire(
-  typeof __filename === "string" ? __filename : fileURLToPath(import.meta.url),
+const nodeRequire = createRequire(
+  typeof __filename === "string" ? __filename : process.argv[1] ?? `${process.cwd()}/package.json`,
 );
 
-const sqlite = require("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
+const sqlite = nodeRequire("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
 
 export const DatabaseSync = sqlite.DatabaseSync;
 export type DatabaseSync = DatabaseSyncType;

@@ -4,7 +4,6 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { ChatStore } from "../chat/store.js";
 import { buildCatalogue } from "../core/catalogue.js";
@@ -54,12 +53,15 @@ const UNSUPPORTED_MESSAGE =
 
 function uiRoot(): string {
   // dist/api/app.js -> dist/ui
-  const here = typeof __filename === "string" ? dirname(__filename) : dirname(fileURLToPath(import.meta.url));
+  const entry = typeof __filename === "string" ? __filename : process.argv[1] ?? process.cwd();
+  const here = dirname(entry);
   const candidates = [
     join(here, "ui"),
     join(here, "..", "ui"),
     join(here, "..", "src", "ui"),
     join(here, "..", "..", "src", "ui"),
+    join(process.cwd(), "dist", "ui"),
+    join(process.cwd(), "src", "ui"),
   ];
   return candidates.find((p) => existsSync(join(p, "index.html"))) ?? candidates[0]!;
 }

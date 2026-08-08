@@ -19,6 +19,7 @@ import { importCredentials } from "./core/import.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
+import { inspectStorage } from "./storage.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
@@ -407,8 +408,14 @@ async function cmdProviders(args: string[]): Promise<void> {
 }
 
 function cmdDoctor(args: string[]): void {
-  const { cfg, store } = bootstrap();
-  const report = buildDoctorReport(cfg, BUILTIN_PROVIDER_REGISTRY, store.all());
+  const { cfg, store, db } = bootstrap();
+  const report = buildDoctorReport(
+    cfg,
+    BUILTIN_PROVIDER_REGISTRY,
+    store.all(),
+    Math.floor(Date.now() / 1000),
+    inspectStorage(db, cfg.dbPath),
+  );
   if (args.includes("--json")) {
     out(JSON.stringify({ version: VERSION, ...report }, null, 2));
     if (!report.ok) process.exitCode = 1;

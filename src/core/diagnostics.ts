@@ -4,6 +4,7 @@ import { providerDef, type ProviderDef } from "./providers.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { effectiveState, isAvailable } from "../pool/store.js";
 import type { Credential } from "../pool/types.js";
+import type { StorageHealth } from "../storage.js";
 
 export type ProviderHealth = "unconfigured" | "ready" | "degraded" | "offline";
 export type DiagnosticLevel = "pass" | "warn" | "fail";
@@ -33,6 +34,7 @@ export interface DoctorReport {
   ok: boolean;
   checks: DoctorCheck[];
   providers: ProviderStatus[];
+  storage: StorageHealth | null;
 }
 
 const fallbackDefinition = (id: string): ProviderDef => ({
@@ -103,6 +105,7 @@ export function buildDoctorReport(
   registry: ProviderRegistry,
   credentials: readonly Credential[],
   at = Math.floor(Date.now() / 1000),
+  storage: StorageHealth | null = null,
 ): DoctorReport {
   const statuses = buildProviderStatus(registry, credentials, at);
   const available = credentials.filter((credential) => isAvailable(credential, at)).length;
@@ -150,9 +153,22 @@ export function buildDoctorReport(
     },
   ];
 
+  if (storage) {
+    checks.splice(2, 0, {
+      id: "storage-integrity",
+      level: storage.healthy ? "pass" : "fail",
+      label: "Storage integrity",
+      message:
+        `schema ${storage.schemaVersion}/${storage.expectedSchemaVersion}, ` +
+        `integrity ${storage.integrity}, foreign keys ${storage.foreignKeys ? "on" : "off"}, ` +
+        `journal ${storage.journalMode}`,
+    });
+  }
+
   return {
     ok: checks.every((check) => check.level !== "fail"),
     checks,
     providers: statuses,
+    storage,
   };
 }

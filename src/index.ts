@@ -28,6 +28,9 @@ export type { BuildOptions, CatalogueEntry } from "./core/catalogue.js";
 export { BUILTIN_AUTH_ADAPTERS, AuthAdapterRegistry } from "./core/auth-adapters.js";
 export type { AuthAdapter, AuthAdapterContext, AuthAdapterKind } from "./core/auth-adapters.js";
 
+export { inspectStorage, SCHEMA_VERSION } from "./storage.js";
+export type { StorageHealth } from "./storage.js";
+
 export { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 export type { DoctorCheck, DoctorReport, DiagnosticLevel, ProviderHealth, ProviderStatus } from "./core/diagnostics.js";
 
