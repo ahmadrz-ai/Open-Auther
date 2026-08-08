@@ -13,7 +13,8 @@ import { createApp } from "./api/app.js";
 import { loadConfig, generateGatewayKey, type Config } from "./config.js";
 import { now, openDatabase, type Database } from "./db.js";
 import { configureLogging, createLogger, maskEmail } from "./logging.js";
-import { beginLogin, openBrowser } from "./core/login.js";
+import { openBrowser } from "./core/login.js";
+import { BUILTIN_AUTH_ADAPTERS } from "./core/auth-adapters.js";
 import { importCredentials } from "./core/import.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
@@ -111,10 +112,28 @@ async function cmdServe(): Promise<void> {
 
 // ---------------------------------------------------------------- auth login
 
+function cmdAuthAdapters(): void {
+  out();
+  out(`  ${C.bold}Interactive login adapters${C.reset}`);
+  out(`  ${C.dim}${"ID".padEnd(14)}${"KIND".padEnd(12)}LABEL${C.reset}`);
+  for (const adapter of BUILTIN_AUTH_ADAPTERS.list()) {
+    out(`  ${adapter.id.padEnd(14)}${adapter.authKind.padEnd(12)}${adapter.label}`);
+  }
+  out();
+}
+
 async function cmdAuthLogin(args: string[]): Promise<void> {
   const { cfg, store } = bootstrap();
   const labelIdx = args.indexOf("--label");
   const label = labelIdx >= 0 ? (args[labelIdx + 1] ?? null) : null;
+  const providerIdx = args.indexOf("--provider");
+  const providerId = providerIdx >= 0 ? (args[providerIdx + 1] ?? "") : "codex";
+  const adapter = BUILTIN_AUTH_ADAPTERS.get(providerId);
+  if (!adapter) {
+    out(`  ${C.red}Unsupported login provider:${C.reset} ${providerId}`);
+    out(`  ${C.dim}Available adapters: ${BUILTIN_AUTH_ADAPTERS.list().map((item) => item.id).join(", ")}${C.reset}`);
+    process.exit(2);
+  }
 
   out();
   out(`  ${C.bold}${C.yellow}Before you continue${C.reset}`);
@@ -126,7 +145,7 @@ async function cmdAuthLogin(args: string[]): Promise<void> {
   out(`  ${C.dim}wasted the round trip.${C.reset}`);
   out();
 
-  const { authorizeUrl, completed } = beginLogin(cfg);
+  const { authorizeUrl, completed } = await adapter.begin({ cfg });
   out(`  ${C.dim}Opening:${C.reset}`);
   out(`  ${C.cyan}${authorizeUrl}${C.reset}`);
   out();
@@ -475,7 +494,8 @@ function usage(): void {
   ${C.bold}Usage${C.reset}
     open-auther [serve]                 Start the gateway and dashboard
     open-auther status                  Pool summary
-    open-auther auth login [--label X]  Add an account (use a private window)
+    open-auther auth login [--provider codex] [--label X]
+    open-auther auth adapters             List interactive login adapters
     open-auther auth import <file>      Import credentials from JSON
     open-auther auth list               List accounts
     open-auther auth revive <id>        Return a dead credential to rotation
@@ -516,6 +536,7 @@ async function main(): Promise<void> {
     const sub = argv[1];
     const rest = argv.slice(2);
     if (sub === "login") return cmdAuthLogin(rest);
+    if (sub === "adapters") return cmdAuthAdapters();
     if (sub === "import") return cmdAuthImport(rest);
     if (sub === "list" || sub === "ls") return cmdAuthList();
     if (sub === "revive") return cmdRevive(rest);

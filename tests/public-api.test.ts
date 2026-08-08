@@ -8,5 +8,7 @@ describe("public library entrypoint", () => {
     expect(OpenAuther.providerDef("gemini")?.id).toBe("gemini");
     expect(OpenAuther.buildProviderStatus).toBeTypeOf("function");
     expect(OpenAuther.buildDoctorReport).toBeTypeOf("function");
+    expect(OpenAuther.AuthAdapterRegistry).toBeTypeOf("function");
+    expect(OpenAuther.BUILTIN_AUTH_ADAPTERS.get("codex")?.id).toBe("codex");
   });
 });

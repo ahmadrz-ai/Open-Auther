@@ -50,7 +50,8 @@ The CLI prints the local OpenAI-compatible base URL, gateway API key, and dashbo
 ```text
 open-auther [serve]                 Start the gateway and dashboard
 open-auther status                  Show pool summary
-open-auther auth login [--label X]  Add an OAuth account
+open-auther auth login [--provider codex] [--label X]
+open-auther auth adapters             List interactive login adapters
 open-auther auth import <file>      Import credentials from JSON
 open-auther auth list               List configured accounts
 open-auther auth revive <id>        Re-enable a dead credential
