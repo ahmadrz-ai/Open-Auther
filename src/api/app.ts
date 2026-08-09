@@ -20,6 +20,7 @@ import { gatewayAuth } from "./auth.js";
 import { chatCompletionsHandler } from "./chat.js";
 import { errorResponse } from "./errors.js";
 import { LoginSessions } from "./oauth.js";
+import { checkForUpdate } from "../core/update.js";
 
 const log = createLogger({ mod: "http" });
 
@@ -119,6 +120,8 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
   // --------------------------------------------------------------- authed
   app.use("/v1/*", gatewayAuth(cfg));
   app.use("/admin/*", gatewayAuth(cfg));
+
+  app.get("/admin/update", async (c) => c.json(await checkForUpdate()));
 
   const cavemanHistory = new CavemanHistory(db);
   app.post("/v1/chat/completions", chatCompletionsHandler(cfg, router, store, cavemanHistory));

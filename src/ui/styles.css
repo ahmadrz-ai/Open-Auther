@@ -1179,3 +1179,8 @@ tbody tr:hover { background: rgba(185,154,255,0.045); }
 @media (max-width: 480px) {
   .provider-grid { grid-template-columns: 1fr; }
 }
+
+.about-brand { display: flex; align-items: center; gap: 12px; }
+.about-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid rgba(185,154,255,0.28); border-radius: 14px; color: var(--accent); background: rgba(185,154,255,0.08); }
+.about-name { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+.about-command { display: block; overflow-x: auto; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); color: var(--text); background: var(--surface-3); font: 11px var(--mono); white-space: nowrap; }

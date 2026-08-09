@@ -20,6 +20,7 @@ import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
 import { inspectStorage } from "./storage.js";
+import { checkForUpdate } from "./core/update.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
@@ -471,6 +472,31 @@ function cmdKey(args: string[]): void {
   process.exit(1);
 }
 
+// ------------------------------------------------------------------- update
+
+async function cmdUpdate(args: string[]): Promise<void> {
+  const result = await checkForUpdate();
+  if (args.includes("--json")) {
+    out(JSON.stringify(result, null, 2));
+    if (result.state === "error") process.exitCode = 1;
+    return;
+  }
+
+  out();
+  out(`  ${C.bold}open-auther update${C.reset}`);
+  if (result.state === "update_available") {
+    out(`  ${C.yellow}${result.message}${C.reset}`);
+    out(`  ${C.dim}Install with:${C.reset} ${C.cyan}${result.installCommand}${C.reset}`);
+  } else if (result.state === "up_to_date") {
+    out(`  ${C.green}${result.message}${C.reset}`);
+  } else {
+    out(`  ${C.red}${result.message}${C.reset}`);
+    process.exitCode = 1;
+  }
+  out(`  ${C.dim}${result.packageUrl}${C.reset}`);
+  out();
+}
+
 // --------------------------------------------------------------------- misc
 
 function cmdRevive(args: string[]): void {
@@ -512,6 +538,8 @@ function usage(): void {
     open-auther providers status --json Machine-readable provider status
     open-auther providers discover     Probe and persist provider endpoint/model metadata
     open-auther providers discover --json Machine-readable discovery results
+    open-auther update                  Check npm for a newer release
+    open-auther update --json           Machine-readable update status
     open-auther doctor                  Diagnose local gateway readiness
     open-auther doctor --json           Machine-readable diagnostics
     open-auther key show|new            Gateway API keys
@@ -536,6 +564,7 @@ async function main(): Promise<void> {
   if (!cmd || cmd === "serve") return cmdServe();
   if (cmd === "status") return cmdStatus();
   if (cmd === "doctor") return cmdDoctor(argv.slice(1));
+  if (cmd === "update") return cmdUpdate(argv.slice(1));
   if (cmd === "providers") return cmdProviders(argv.slice(1));
   if (cmd === "key") return cmdKey(argv.slice(1));
 

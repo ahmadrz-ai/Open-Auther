@@ -33,6 +33,7 @@ const NAV = [
 
   { group: "Configuration" },
   { id: "settings", icon: "settings", label: "Settings", page: ops.settings },
+  { id: "about", icon: "spark", label: "About", page: ops.about },
 ];
 
 const ROUTES = Object.fromEntries(NAV.filter((n) => n.id).map((n) => [n.id, n]));

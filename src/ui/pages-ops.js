@@ -904,3 +904,69 @@ export const settings = {
     return {};
   },
 };
+
+/* --------------------------------------------------------------- about */
+
+export const about = {
+  title: "About",
+  subtitle: "Open-Auther release information and update status",
+
+  mount(host, ctx) {
+    let update = null;
+
+    const render = async () => {
+      host.innerHTML = `<div class="page"><div class="empty">Checking for updates…</div></div>`;
+      try {
+        update = await get("/admin/update");
+      } catch (err) {
+        host.innerHTML = `<div class="page"><div class="note bad">${icon("error", 16)}<span>${esc(err.message)}</span></div></div>`;
+        return;
+      }
+
+      const tone = update.state === "update_available" ? "warn" : update.state === "error" ? "bad" : "ok";
+      const symbol = tone === "ok" ? "check" : tone === "warn" ? "warning" : "error";
+      const current = ctx.status?.gateway?.version ?? update.currentVersion;
+      const latest = update.latestVersion ?? "Unavailable";
+
+      host.innerHTML = `<div class="page">
+        <div class="grid-2">
+          ${card("Open-Auther", "spark", `
+            <div class="about-brand">
+              <div class="about-mark">${icon("spark", 28)}</div>
+              <div>
+                <div class="about-name">Open-Auther</div>
+                <div class="help">OpenAI-compatible authentication gateway and model router.</div>
+              </div>
+            </div>
+            <div class="table-wrap" style="margin-top:16px"><table><tbody>
+              <tr><td style="color:var(--text-dim);width:42%">Installed version</td><td class="mono">v${esc(current)}</td></tr>
+              <tr><td style="color:var(--text-dim)">Latest npm version</td><td class="mono">${esc(latest)}</td></tr>
+              <tr><td style="color:var(--text-dim)">Package</td><td><a href="${esc(update.packageUrl)}" target="_blank" rel="noreferrer">open-auther ${icon("external", 13)}</a></td></tr>
+            </tbody></table></div>`)}
+
+          ${card("Update status", "refresh", `
+            <div class="note ${tone}">${icon(symbol, 16)}<span><b>${esc(update.message)}</b></span></div>
+            ${update.state === "update_available"
+              ? `<div class="field" style="margin-top:14px"><label>Update command</label><code class="about-command">${esc(update.installCommand)}</code>
+                   <span class="help">Run this in a terminal, then restart the gateway.</span></div>`
+              : ""}
+            ${update.state === "error"
+              ? `<div class="help" style="margin-top:14px">The registry could not be reached. The installed gateway continues to work normally.</div>`
+              : ""}
+            <div style="margin-top:16px"><button class="btn-primary" id="about-check">${icon("refresh", 15)} Check again</button></div>`)}
+        </div>
+
+        ${card("Release information", "logs", `
+          <div class="note">${icon("shield", 16)}
+            <span>Updates are checked against the public npm registry. No gateway keys,
+            OAuth tokens, or local configuration are sent.</span></div>
+          <div class="help" style="margin-top:12px">Last checked: ${esc(new Date(update.checkedAt).toLocaleString())}</div>`)}
+      </div>`;
+
+      host.querySelector("#about-check")?.addEventListener("click", render);
+    };
+
+    render();
+    return {};
+  },
+};
