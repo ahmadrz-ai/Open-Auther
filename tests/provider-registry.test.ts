@@ -7,6 +7,7 @@ import {
   BUILTIN_PROVIDER_REGISTRY,
   providerDef,
   providerDefs,
+  CODEX_PROVIDER,
   type ProviderDef,
 } from "../src/core/providers.js";
 
@@ -99,6 +100,17 @@ describe("ProviderRegistry", () => {
     } finally {
       BUILTIN_PROVIDER_REGISTRY.unregister("runtime-example");
     }
+  });
+
+  it("includes Hermes-aligned GPT 5.6 Codex routes", () => {
+    expect(CODEX_PROVIDER.defaultModels).toEqual(
+      expect.arrayContaining([
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna-pro",
+      ]),
+    );
   });
 
   it("produces stable summaries for CLI and dashboard consumers", () => {

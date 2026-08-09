@@ -171,7 +171,23 @@ export const CODEX_PROVIDER: ProviderDef = {
   keyUrl: null,
   probeModel: "gpt-5-codex",
   listsModels: false,
-  defaultModels: ["gpt-5-codex", "gpt-5", "gpt-5-mini", "codex-mini-latest"],
+  defaultModels: [
+    // Hermes-aligned Codex routes. These are raw upstream model ids; the UI
+    // may add display labels, but routing must forward the id unchanged.
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.6-mini",
+    "gpt-5.6-sol",
+    "gpt-5.6-sol-pro",
+    "gpt-5.6-terra-pro",
+    "gpt-5.6-luna-pro",
+    // Existing Codex-compatible routes retained for backward compatibility.
+    "gpt-5-codex",
+    "gpt-5",
+    "gpt-5-mini",
+    "codex-mini-latest",
+  ],
 };
 
 export function providerDef(id: string): ProviderDef | null {
