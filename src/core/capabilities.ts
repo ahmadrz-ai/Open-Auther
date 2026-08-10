@@ -208,8 +208,12 @@ export function capabilitiesFor(
   model: string,
   overrides: Record<string, Partial<ModelCapabilities>> = {},
 ): ModelCapabilities & { source: "override" | "builtin" | "unknown" } {
-  const builtin = BUILTIN_CAPABILITIES[model];
-  const override = overrides[model];
+  const builtin = Object.entries(BUILTIN_CAPABILITIES).find(
+    ([id]) => id.toLowerCase() === model.toLowerCase(),
+  )?.[1];
+  const override =
+    overrides[model] ??
+    Object.entries(overrides).find(([id]) => id.toLowerCase() === model.toLowerCase())?.[1];
 
   if (override) {
     return { ...(builtin ?? UNKNOWN_MODEL), ...override, source: "override" };

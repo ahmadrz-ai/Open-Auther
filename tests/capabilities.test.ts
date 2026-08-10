@@ -27,6 +27,11 @@ describe("request capability requirements", () => {
     ).toEqual({ vision: false, tools: true, reasoning: true });
   });
 
+  it("matches built-in capabilities case-insensitively for discovered model ids", () => {
+    expect(capabilitiesFor("gpt-5.6-luna").reasoning).toBe(true);
+    expect(capabilitiesFor("gpt-5.6-luna").source).toBe("builtin");
+  });
+
   it("uses conservative unknown capabilities for unmet requirements", () => {
     const requirements = { vision: true, tools: false, reasoning: false };
     expect(meetsRequirements(UNKNOWN_MODEL, requirements)).toBe(false);

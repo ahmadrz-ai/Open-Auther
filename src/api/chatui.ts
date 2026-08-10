@@ -268,7 +268,9 @@ export function chatUiRoutes(
             model,
             messages: history,
             stream: true,
-            reasoning_effort: conversation.reasoningEffort as never,
+            reasoning_effort: capabilitiesFor(model, cfg.modelCapabilities).reasoning
+              ? (conversation.reasoningEffort as never)
+              : undefined,
           },
           controller.signal,
           { pinnedCredentialId: conversation.pinnedCredentialId },

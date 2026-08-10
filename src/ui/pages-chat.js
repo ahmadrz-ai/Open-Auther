@@ -298,11 +298,17 @@ export const chat = {
       renderThread();
     };
 
+    const currentCaps = () => {
+      const model = el("#c-model").value.trim();
+      const entry = meta?.models.find((m) => m.id === model);
+      return entry?.capabilities ?? { reasoning: false };
+    };
+
     const ensureConversation = async () => {
       if (current) return current;
       const body = {
         model: el("#c-model").value,
-        reasoningEffort: el("#c-effort").value,
+        reasoningEffort: currentCaps().reasoning ? el("#c-effort").value : undefined,
         pinnedCredentialId: el("#c-auth").value ? Number(el("#c-auth").value) : null,
       };
       current = (await post("/admin/chat/conversations", body)).conversation;
