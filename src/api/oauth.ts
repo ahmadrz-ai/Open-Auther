@@ -14,6 +14,7 @@ import type { Config } from "../config.js";
 import { createLogger } from "../logging.js";
 import { beginAntigravityLogin } from "../core/antigravity.js";
 import { beginLogin } from "../core/login.js";
+import { fetchCodexModels } from "../upstream/codex.js";
 import { fetchAntigravityModels } from "../upstream/antigravity.js";
 import { DuplicateAccountError, type CredentialStore } from "../pool/store.js";
 
@@ -137,7 +138,7 @@ export class LoginSessions {
     this.sessions.set(session.id, session);
 
     completed
-      .then((result) => {
+      .then(async (result) => {
         if (session.state === "cancelled") return;
         const credential = this.store.add({
           accountId: result.accountId,
@@ -149,6 +150,17 @@ export class LoginSessions {
           idToken: result.idToken,
           accessExpiresAt: result.accessExpiresAt,
         });
+
+        // Hermes resolves the account-specific Codex catalog immediately after
+        // OAuth. Keep the curated provider defaults when the undocumented
+        // endpoint is temporarily unavailable.
+        try {
+          const models = await fetchCodexModels(result.accessToken);
+          if (models.length) this.store.setCustomModels(credential.id, models);
+        } catch {
+          /* curated defaults stand */
+        }
+
         session.state = "complete";
         session.credentialId = credential.id;
         log.info("session_complete", { credential: credential.id });

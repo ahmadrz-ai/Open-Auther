@@ -11,6 +11,7 @@ import type { Config } from "../config.js";
 import { createLogger } from "../logging.js";
 import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/errors.js";
 import type { Credential, ProviderType } from "../pool/types.js";
+import { codexHeaders } from "./codex.js";
 import { callAntigravity, mapAntigravityEvent } from "./antigravity.js";
 import { callKimiWeb, kimiEvents } from "./kimiweb.js";
 import { CLIENT_PARAMS, mapCodexEvent, type CodexEvent, type CodexRequest } from "./translate.js";
@@ -272,16 +273,10 @@ export async function callCodex(
   }
 
   // Otherwise: ChatGPT Web Codex Backend (chatgpt.com/backend-api/codex)
-  const headers: Record<string, string> = {
-    authorization: `Bearer ${credential.accessToken}`,
-    "content-type": "application/json",
-    accept: "text/event-stream",
-    "openai-beta": "responses=experimental",
-    originator: "codex_cli_rs",
-    session_id: sessionId,
-    "User-Agent": "codex_cli_rs/0.0.0 (Hermes Agent)",
-  };
-  if (credential.accountId) headers["chatgpt-account-id"] = credential.accountId;
+  // Match the first-party Codex CLI/Hermes fingerprint and derive the account
+  // header from the live JWT. This is required for the account-scoped catalog
+  // and avoids stale account metadata after token refresh.
+  const headers = codexHeaders(credential, sessionId);
 
   /*
    * One request, one model. There was previously a loop here that retried up

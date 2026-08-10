@@ -19,6 +19,7 @@ import { importCredentials } from "./core/import.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
+import { fetchCodexModels } from "./upstream/codex.js";
 import { inspectStorage } from "./storage.js";
 import { checkForUpdate } from "./core/update.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
@@ -298,7 +299,7 @@ function providerHealthColor(health: string): string {
 }
 
 async function cmdProvidersDiscover(args: string[]): Promise<void> {
-  const { store } = bootstrap();
+  const { cfg, store } = bootstrap();
   const json = args.includes("--json");
   const idArg = args.find((arg) => /^\d+$/.test(arg));
   const id = idArg ? Number.parseInt(idArg, 10) : null;
@@ -308,6 +309,60 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
 
   const results: Array<Record<string, unknown>> = [];
   for (const credential of credentials) {
+    // Codex is not a generic OpenAI-compatible provider. Hermes discovers its
+    // account-scoped model catalogue from the dedicated Codex endpoint.
+    if (credential.providerType === "codex_oauth") {
+      if (!credential.accessToken) {
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: false,
+          skipped: true,
+          message: "No Codex access token is stored.",
+        });
+        continue;
+      }
+      try {
+        const models = await fetchCodexModels(credential.accessToken);
+        if (models.length) {
+          store.setCustomModels(credential.id, models);
+          // Hermes does not permanently kill a valid OAuth credential because
+          // an earlier request was classified as a plan/model gate. A live,
+          // account-authenticated Codex catalogue is evidence that the token is
+          // usable, so clear only that stale terminal state.
+          if (credential.state === "dead" && credential.lastError === "plan_unsupported_on_codex") {
+            store.revive(credential.id);
+          }
+        }
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: models.length > 0,
+          skipped: false,
+          baseUrl: cfg.codexBaseUrl,
+          models,
+          via: "codex_models",
+          attempts: 1,
+          message: models.length
+            ? "Account-specific Codex model catalogue loaded."
+            : "Codex model catalogue returned no visible models.",
+        });
+      } catch (err) {
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: false,
+          skipped: false,
+          baseUrl: cfg.codexBaseUrl,
+          models: [],
+          via: "codex_models",
+          attempts: 1,
+          message: `Codex model discovery failed: ${(err as Error).message}`,
+        });
+      }
+      continue;
+    }
+
     if (!credential.baseUrl || !credential.accessToken) {
       results.push({
         credentialId: credential.id,

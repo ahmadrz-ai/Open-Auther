@@ -207,8 +207,11 @@ export function toCodexRequest(req: ChatCompletionRequest): CodexRequest {
   }
 
   if (instructions.length) body.instructions = instructions.join("\n\n");
-  if (req.reasoning_effort) {
-    body.reasoning = { effort: req.reasoning_effort, summary: "auto" };
+  if (req.reasoning_effort || req.model.toLowerCase().startsWith("gpt-5")) {
+    // Hermes enables Codex reasoning by default. OpenCode often omits
+    // reasoning_effort, so use Hermes' medium/auto defaults instead of sending
+    // a materially different request to the same subscription endpoint.
+    body.reasoning = { effort: req.reasoning_effort ?? "medium", summary: "auto" };
     body.include = ["reasoning.encrypted_content"];
   }
 

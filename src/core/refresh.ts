@@ -111,21 +111,29 @@ export async function ensureFreshToken(
       }
     }
 
+    const codexRefresh = current.providerType === "codex_oauth";
     let res: Response;
     try {
+      const refreshPayload = codexRefresh
+        ? new URLSearchParams({
+            grant_type: "refresh_token",
+            refresh_token: current.refreshToken,
+            client_id: cfg.oauthClientId,
+          }).toString()
+        : JSON.stringify({
+            grant_type: "refresh_token",
+            client_id: cfg.oauthClientId,
+            refresh_token: current.refreshToken,
+            scope: "openid profile email offline_access",
+          });
       res = await fetch(tokenEndpoint(cfg), {
         method: "POST",
         headers: {
-          "content-type": "application/json",
+          "content-type": codexRefresh ? "application/x-www-form-urlencoded" : "application/json",
           accept: "application/json",
-          "user-agent": "ai-auther",
+          "user-agent": codexRefresh ? "codex_cli_rs/0.0.0 (Hermes Agent)" : "ai-auther",
         },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          client_id: cfg.oauthClientId,
-          refresh_token: current.refreshToken,
-          scope: "openid profile email offline_access",
-        }),
+        body: refreshPayload,
         signal: AbortSignal.timeout(30_000),
       });
     } catch (err) {
@@ -183,8 +191,8 @@ export async function ensureFreshToken(
 
     store.updateTokens(credentialId, {
       accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? null,
-      idToken: tokens.id_token ?? null,
+      refreshToken: tokens.refresh_token ?? current.refreshToken,
+      idToken: tokens.id_token ?? current.idToken,
       accessExpiresAt: expiresAt,
     });
 

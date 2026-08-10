@@ -132,10 +132,11 @@ export function classifyHttp(status: number, body: unknown, rawText?: string): U
     (message && /is not supported when using Codex with a ChatGPT account/i.test(message))
   ) {
     return {
-      kind: "terminal",
+      kind: "client",
       status,
       code: "plan_unsupported_on_codex",
-      message: "This account type (free plan) is not permitted to access the Codex backend.",
+      message:
+        "The Codex backend rejected this model/account combination. The OAuth credential remains active; verify the account-scoped Codex catalogue and model selection.",
       resetsAt: null,
       usageLimited: false,
     };

@@ -162,6 +162,16 @@ describe("toCodexRequest", () => {
     expect(body.include).toEqual(["reasoning.encrypted_content"]);
   });
 
+  it("uses Hermes' Codex defaults when the OpenAI-compatible client omits reasoning controls", () => {
+    const body = toCodexRequest({
+      model: "gpt-5.6-luna",
+      messages: [{ role: "user", content: "x" }],
+    });
+
+    expect(body.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    expect(body.include).toEqual(["reasoning.encrypted_content"]);
+  });
+
   it("forwards the model verbatim and never substitutes one", () => {
     // Silently swapping the model means the caller gets a plausible answer
     // from a model they did not ask for, with nothing to indicate it.
