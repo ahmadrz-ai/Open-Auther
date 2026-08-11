@@ -6,11 +6,14 @@
  */
 
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import packageJson from "../package.json";
 import { createApp } from "./api/app.js";
-import { loadConfig, generateGatewayKey, type Config } from "./config.js";
+import { loadConfig, generateGatewayKey, defaultHome, type Config } from "./config.js";
 import { now, openDatabase, type Database } from "./db.js";
 import { configureLogging, createLogger, maskEmail } from "./logging.js";
 import { openBrowser } from "./core/login.js";
@@ -609,6 +612,79 @@ async function cmdUpdate(args: string[]): Promise<void> {
   out();
 }
 
+// ------------------------------------------------------------------- uninstall
+
+function uninstallPackage(): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolveResult) => {
+    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+    const child = spawn(npmCommand, ["uninstall", "-g", "open-auther"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (err) => resolveResult({ ok: false, message: `npm uninstall failed: ${err.message}` }));
+    child.once("close", (code) =>
+      resolveResult(
+        code === 0
+          ? { ok: true, message: "Global npm package removed." }
+          : { ok: false, message: `npm uninstall failed${stderr.trim() ? `: ${stderr.trim()}` : ` (exit ${code})`}` },
+      ),
+    );
+  });
+}
+
+async function cmdUninstall(args: string[]): Promise<void> {
+  const cfg = loadConfig();
+  const dataDir = cfg.home;
+  const configPath = cfg.configPath;
+  const dbPath = cfg.dbPath;
+  const forced = args.includes("--yes") || args.includes("-y");
+
+  if (!forced) {
+    out();
+    out(`  ${C.red}${C.bold}This permanently deletes open-auther.${C.reset}`);
+    out(`  ${C.dim}It removes the global npm package and all local data:${C.reset}`);
+    out(`  ${C.dim}${dataDir}${C.reset}`);
+    out(`  ${C.dim}including OAuth tokens, gateway keys, config, and database.${C.reset}`);
+    out();
+    const rl = createInterface({ input, output });
+    const answer = (await rl.question(`  Type ${C.bold}UNINSTALL${C.reset} to continue: `)).trim();
+    rl.close();
+    if (answer !== "UNINSTALL") {
+      out(`  ${C.yellow}Cancelled. Nothing was removed.${C.reset}`);
+      return;
+    }
+  }
+
+  const packageResult = await uninstallPackage();
+  const { rmSync, existsSync } = await import("node:fs");
+  const paths = new Set([dataDir, configPath, dbPath, `${dbPath}-wal`, `${dbPath}-shm`]);
+  const failures: string[] = [];
+  let removed = 0;
+  for (const target of paths) {
+    if (!existsSync(target)) continue;
+    try {
+      rmSync(target, { recursive: true, force: true });
+      removed += 1;
+    } catch (err) {
+      failures.push(`${target}: ${(err as Error).message}`);
+    }
+  }
+
+  if (!packageResult.ok || failures.length) {
+    out(`  ${C.red}Uninstall incomplete.${C.reset}`);
+    out(`  ${C.dim}${packageResult.message}${C.reset}`);
+    for (const failure of failures) out(`  ${C.red}${failure}${C.reset}`);
+    process.exitCode = 1;
+    return;
+  }
+  out(`  ${C.green}open-auther completely removed.${C.reset}`);
+  out(`  ${C.dim}Removed package and ${removed} local data path(s). npm cache was preserved.${C.reset}`);
+}
+
 // --------------------------------------------------------------------- misc
 
 function cmdRevive(args: string[]): void {
@@ -651,6 +727,7 @@ function usage(): void {
     open-auther providers discover     Probe and persist provider endpoint/model metadata
     open-auther providers discover --json Machine-readable discovery results
     open-auther update                  Check npm for a newer release
+    open-auther uninstall [--yes]      Remove package and all local data
     open-auther update --json           Machine-readable update status
     open-auther doctor                  Diagnose local gateway readiness
     open-auther doctor --json           Machine-readable diagnostics
@@ -677,6 +754,7 @@ async function main(): Promise<void> {
   if (cmd === "status") return cmdStatus();
   if (cmd === "doctor") return cmdDoctor(argv.slice(1));
   if (cmd === "update") return cmdUpdate(argv.slice(1));
+  if (cmd === "uninstall") return cmdUninstall(argv.slice(1));
   if (cmd === "providers") return cmdProviders(argv.slice(1));
   if (cmd === "key") return cmdKey(argv.slice(1));
 
