@@ -454,6 +454,7 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
     if (detection.ok && detection.baseUrl) {
       store.setBaseUrl(credential.id, detection.baseUrl);
       if (detection.models.length) store.setCustomModels(credential.id, detection.models);
+      if (detection.protocol) store.setProtocol(credential.id, detection.protocol);
     }
 
     results.push({

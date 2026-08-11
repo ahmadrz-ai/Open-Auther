@@ -95,6 +95,29 @@ open, and the command will report which path it could not delete.
 
 The router rejects known capability mismatches before sending an upstream request. Vision, tool, and reasoning requirements are inferred from the request; virtual models such as `fast` and `quality` only rank candidates that can satisfy those requirements. Unknown models remain usable for ordinary text requests and can be made explicit through capability overrides.
 
+## Custom endpoint protocols
+
+A custom provider's wire protocol is detected, not assumed. Detection probes in
+order:
+
+```text
+GET  <base>/models             OpenAI-compatible, and yields the model list
+POST <base>/chat/completions   OpenAI-compatible with no listing route
+POST <base>/messages           Anthropic Messages API
+```
+
+The result is stored per credential, so later requests are framed correctly:
+Anthropic endpoints get `x-api-key` and `anthropic-version` headers, the system
+prompt as a top-level field, and a mandatory `max_tokens`. Previously every
+custom provider was assumed OpenAI-compatible, so an Anthropic endpoint returned
+a bare 404 with nothing to explain it.
+
+Re-run detection on an existing connection with:
+
+```bash
+open-auther providers discover
+```
+
 ## Configuration
 
 Environment variables use the `AI_AUTHER_` prefix for compatibility with existing installations:

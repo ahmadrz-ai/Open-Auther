@@ -277,6 +277,8 @@ export function providerRoutes(
 
     store.setBaseUrl(cred.id, detection.baseUrl!);
     if (detection.models.length) store.setCustomModels(cred.id, detection.models);
+    // Remember the protocol so every later request is framed correctly.
+    if (detection.protocol) store.setProtocol(cred.id, detection.protocol);
 
     return c.json({
       ok: true,

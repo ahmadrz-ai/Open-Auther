@@ -284,8 +284,38 @@ export class Router {
     return out;
   }
 
-  private drained(attempts: number, model?: string): RouteFailure {
+  private drained(attempts: number, model?: string, providerId?: string | null): RouteFailure {
     const all = this.store.all();
+
+    /*
+     * Name the provider pin when it is the actual reason.
+     *
+     * Affinity fails closed, which is right — a conversation pinned to one
+     * provider must never be answered by another. But the message was computed
+     * from the unpinned pool, so pinning a Gemini model to `codex` reported
+     * "all 3 credentials that can serve it are currently unavailable" while
+     * three healthy Antigravity accounts sat idle, excluded by the pin. That
+     * sends you to look at quotas when the answer is the selector.
+     */
+    if (providerId && model) {
+      const capableAnywhere = all.filter((c) => canServe(c, model));
+      const capableHere = capableAnywhere.filter((c) => c.providerId === providerId);
+      if (capableAnywhere.length > 0 && capableHere.length === 0) {
+        const owners = [...new Set(capableAnywhere.map((c) => c.providerId))].join(", ");
+        return {
+          ok: false,
+          status: 400,
+          code: "provider_pin_excludes_model",
+          message:
+            `This conversation is pinned to "${providerId}", which has no credential ` +
+            `that serves "${model}". ${capableAnywhere.length} credential(s) can serve it, ` +
+            `under: ${owners}. Switch the provider selector to one of those (or to ` +
+            `"All providers"), or pick a model "${providerId}" offers.`,
+          retryAt: null,
+          attempts,
+        };
+      }
+    }
 
     /*
      * Everything below is scoped to credentials that could serve this model.
@@ -512,6 +542,7 @@ export class Router {
         result.response,
         signal,
         credential.providerType,
+        credential.protocol,
       )[Symbol.asyncIterator]();
       const buffered: CodexEvent[] = [];
       let failedDuringPriming: UpstreamFailure | null = null;
@@ -631,7 +662,7 @@ export class Router {
         attempts,
       };
     }
-    return this.drained(attempts, req.model);
+    return this.drained(attempts, req.model, opts.providerId ?? null);
   }
 }
 

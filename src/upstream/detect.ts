@@ -12,6 +12,8 @@
  */
 
 import { createLogger } from "../logging.js";
+import type { CustomProtocol } from "../pool/types.js";
+import { ANTHROPIC_VERSION } from "./anthropic.js";
 
 const log = createLogger({ mod: "detect" });
 
@@ -22,7 +24,12 @@ export interface DetectionResult {
   /** Models the endpoint reported, when it has a listing route. */
   models: string[];
   /** How we established it: model listing, or a live completion. */
-  via: "models" | "chat" | null;
+  via: "models" | "chat" | "messages" | null;
+  /**
+   * Wire protocol the endpoint speaks. NULL when detection could not tell, in
+   * which case routing assumes the OpenAI shape as it always did.
+   */
+  protocol: CustomProtocol | null;
   /** Every candidate tried, with what it did. Shown to the user on failure. */
   attempts: Array<{ url: string; status: number | string; note: string }>;
   message: string;
@@ -118,6 +125,60 @@ async function tryModels(
 }
 
 /**
+ * Does this endpoint speak the Anthropic Messages protocol?
+ *
+ * Worth a separate probe because the two protocols disagree on everything that
+ * matters: route, auth header, and body. An endpoint that 404s
+ * `/chat/completions` is not necessarily broken — it may simply be Anthropic
+ * shaped, which the OpenAI-only probe reported as "no chat route here".
+ */
+async function tryMessages(
+  base: string,
+  apiKey: string,
+  model: string | null,
+  signal: AbortSignal,
+): Promise<{ ok: boolean; status: number | string; note: string }> {
+  try {
+    const res = await fetch(`${base}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({
+        model: model ?? "probe-nonexistent-model",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 1,
+      }),
+      signal,
+    });
+
+    if (res.status === 404 || res.status === 405) {
+      return { ok: false, status: res.status, note: "no messages route here" };
+    }
+    if (!isJson(res)) return { ok: false, status: res.status, note: "returned HTML, not JSON" };
+    if (res.ok) return { ok: true, status: res.status, note: "Anthropic Messages endpoint" };
+
+    /*
+     * A 4xx still identifies the protocol, but only if the error looks
+     * Anthropic's. An OpenAI-compatible gateway that happens to 400 on an
+     * unknown route would otherwise be misclassified, and every later request
+     * would be framed wrongly.
+     */
+    const body = (await res.json().catch(() => null)) as
+      | { type?: string; error?: { type?: string } }
+      | null;
+    if (body?.type === "error" || body?.error?.type) {
+      return { ok: true, status: res.status, note: "spoke Anthropic and returned an error" };
+    }
+    return { ok: false, status: res.status, note: "not an Anthropic error shape" };
+  } catch (err) {
+    return { ok: false, status: "ERR", note: (err as Error).message };
+  }
+}
+
+/**
  * Some endpoints have no `/models` route but serve chat perfectly well.
  *
  * A JSON error is as good a signal as success here: it means something spoke
@@ -181,6 +242,7 @@ export async function detectEndpoint(
       baseUrl: null,
       models: [],
       via: null,
+      protocol: null,
       attempts,
       message: `"${rawUrl}" is not a URL.`,
     };
@@ -201,6 +263,8 @@ export async function detectEndpoint(
           baseUrl: base,
           models: r.models,
           via: "models",
+          // A /models listing is an OpenAI convention; Anthropic has none.
+          protocol: "openai_chat",
           attempts,
           message: `Detected ${base} — ${r.models.length} models listed.`,
         };
@@ -219,8 +283,34 @@ export async function detectEndpoint(
           baseUrl: base,
           models: [],
           via: "chat",
+          protocol: "openai_chat",
           attempts,
           message: `Detected ${base} — no model listing, but chat works.`,
+        };
+      }
+      if (controller.signal.aborted) break;
+    }
+
+    /*
+     * Pass three: the Anthropic Messages protocol.
+     *
+     * Last because it is the rarer shape, but it has to be tried: an Anthropic
+     * endpoint fails both passes above and used to be reported as "not an
+     * OpenAI-compatible API", which is true and useless.
+     */
+    for (const base of list) {
+      const r = await tryMessages(base, apiKey, opts.model ?? null, controller.signal);
+      attempts.push({ url: `${base}/messages`, status: r.status, note: r.note });
+      if (r.ok) {
+        log.info("endpoint_detected", { via: "messages", protocol: "anthropic_messages" });
+        return {
+          ok: true,
+          baseUrl: base,
+          models: [],
+          via: "messages",
+          protocol: "anthropic_messages",
+          attempts,
+          message: `Detected ${base} — Anthropic Messages API.`,
         };
       }
       if (controller.signal.aborted) break;
@@ -231,9 +321,10 @@ export async function detectEndpoint(
       baseUrl: null,
       models: [],
       via: null,
+      protocol: null,
       attempts,
       message:
-        `Could not find an OpenAI-compatible API under "${rawUrl}". ` +
+        `Could not find an OpenAI-compatible or Anthropic API under "${rawUrl}". ` +
         `Tried ${attempts.length} candidates — check the base URL in the provider's own docs ` +
         `(it usually ends in /v1).`,
     };

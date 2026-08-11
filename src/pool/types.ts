@@ -15,6 +15,15 @@ export type ProviderType =
   | "antigravity"
   | "web_cookie";
 
+/**
+ * Wire protocols a custom endpoint may speak.
+ *
+ * Not the same axis as `providerType`: that says which family of service this
+ * is, while this says how to frame a request to it. An `openai_custom`
+ * credential can speak any of these.
+ */
+export type CustomProtocol = "openai_chat" | "anthropic_messages";
+
 export interface Credential {
   id: number;
   /** Unique ID or account ID for the credential. */
@@ -33,6 +42,12 @@ export interface Credential {
   /** Models this connection must never be given, even if it could serve them. */
   excludedModels: string[];
   /** Overrides the User-Agent for web-session providers. */
+  /**
+   * Wire protocol a custom endpoint speaks. NULL means "assume the OpenAI
+   * Chat Completions shape", which is what every custom provider used to get
+   * unconditionally.
+   */
+  protocol: CustomProtocol | null;
   customUserAgent: string | null;
   /** Only serve requests asking for one of these tags. Empty = serve any. */
   routingTags: string[];
@@ -84,6 +99,12 @@ export interface CredentialPublic {
   validationModel: string | null;
   priority: number;
   excludedModels: string[];
+  /**
+   * Wire protocol a custom endpoint speaks. NULL means "assume the OpenAI
+   * Chat Completions shape", which is what every custom provider used to get
+   * unconditionally.
+   */
+  protocol: CustomProtocol | null;
   customUserAgent: string | null;
   routingTags: string[];
   perModelQuota: boolean;

@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -246,6 +246,16 @@ const MIGRATIONS: string[] = [
   // all-provider rotation for existing conversations.
   `
   ALTER TABLE conversations ADD COLUMN provider_id TEXT;
+  `,
+
+  // v14 — which wire protocol a custom endpoint speaks.
+  //
+  // "OpenAI-compatible" was assumed for every custom provider, so pointing one
+  // at an Anthropic-style endpoint produced a 404 on /chat/completions with no
+  // explanation. NULL means "not yet determined": detection fills it in, and
+  // routing falls back to the OpenAI shape, so existing rows behave as before.
+  `
+  ALTER TABLE credentials ADD COLUMN protocol TEXT;
   `,
 ];
 

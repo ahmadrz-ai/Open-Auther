@@ -10,8 +10,9 @@ import { randomUUID } from "node:crypto";
 import type { Config } from "../config.js";
 import { createLogger } from "../logging.js";
 import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/errors.js";
-import type { Credential, ProviderType } from "../pool/types.js";
+import type { Credential, CustomProtocol, ProviderType } from "../pool/types.js";
 import { codexHeaders } from "./codex.js";
+import { anthropicHeaders, mapAnthropicEvent, toAnthropicRequest } from "./anthropic.js";
 import { callAntigravity, mapAntigravityEvent } from "./antigravity.js";
 import { callKimiWeb, kimiEvents } from "./kimiweb.js";
 import { CLIENT_PARAMS, mapCodexEvent, type CodexEvent, type CodexRequest } from "./translate.js";
@@ -162,16 +163,30 @@ export async function callCodex(
         : cfg.upstreamBaseUrl)
     ).replace(/\/+$/, "");
 
-    const targetUrl = targetBase.endsWith("/chat/completions") ? targetBase : `${targetBase}/chat/completions`;
+    /*
+     * Frame the request in whatever protocol this endpoint speaks.
+     *
+     * A custom provider used to be assumed OpenAI-compatible unconditionally,
+     * so an Anthropic-style endpoint got a POST to /chat/completions and
+     * answered 404 with nothing to explain it. `protocol` is set by detection;
+     * null keeps the original OpenAI behaviour for every existing row.
+     */
+    const anthropic = credential.protocol === "anthropic_messages";
 
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${credential.accessToken}`,
-      "content-type": "application/json",
-      accept: "text/event-stream",
-      "user-agent": "ai-auther",
-    };
+    const targetUrl = anthropic
+      ? (targetBase.endsWith("/messages") ? targetBase : `${targetBase}/messages`)
+      : (targetBase.endsWith("/chat/completions") ? targetBase : `${targetBase}/chat/completions`);
 
-    const reqBody = toChatCompletionsBody(body);
+    const headers: Record<string, string> = anthropic
+      ? { ...anthropicHeaders(credential), "user-agent": "open-auther" }
+      : {
+          authorization: `Bearer ${credential.accessToken}`,
+          "content-type": "application/json",
+          accept: "text/event-stream",
+          "user-agent": "ai-auther",
+        };
+
+    const reqBody = anthropic ? toAnthropicRequest(body) : toChatCompletionsBody(body);
 
     let res: Response;
     try {
@@ -419,6 +434,7 @@ export async function* codexEvents(
    * the Codex events or OpenAI chunks the default mapper understands.
    */
   providerType: ProviderType = "codex_oauth",
+  protocol: CustomProtocol | null = null,
 ): AsyncGenerator<CodexEvent> {
   if (!response.body) {
     yield { kind: "error", status: 502, body: { message: "upstream returned no body" } };
@@ -432,9 +448,16 @@ export async function* codexEvents(
   }
 
   const toolIndex = { next: 0 };
+  // Anthropic reports usage across two frames, so the mapper needs state.
+  const anthropicSeen = { inputTokens: 0, outputTokens: 0 };
+
   for await (const raw of parseSSE(response.body, signal)) {
     const events =
-      providerType === "antigravity" ? mapAntigravityEvent(raw) : mapCodexEvent(raw, toolIndex);
+      protocol === "anthropic_messages"
+        ? mapAnthropicEvent(raw, anthropicSeen)
+        : providerType === "antigravity"
+          ? mapAntigravityEvent(raw)
+          : mapCodexEvent(raw, toolIndex);
     for (const ev of events) yield ev;
   }
 }

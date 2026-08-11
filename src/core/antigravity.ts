@@ -226,11 +226,18 @@ function buildAuthorizeUrl(state: string): string {
 }
 
 function donePage(ok: boolean): string {
-  return `<!doctype html><meta charset="utf-8"><title>Open-Auther</title>` +
-    `<style>body{font:15px system-ui;background:#101116;color:#e8eaf0;display:grid;place-items:center;height:100vh}` +
-    `.card{padding:32px;border:1px solid #30343d;border-radius:14px;background:#191c23}` +
-    `h1{color:${ok ? "#8fbf9f" : "#c4837b"}}</style>` +
-    `<div class="card"><h1>${ok ? "Account connected" : "Sign-in failed"}</h1>` +
+  // Brand colours, inlined: this page is served by the loopback listener during
+  // sign-in and cannot reach the dashboard stylesheet.
+  return `<!doctype html><meta charset="utf-8"><title>Open Auther</title>` +
+    `<meta name="theme-color" content="#0a060d">` +
+    `<style>body{font:15px system-ui;background:#0a060d;color:#ede8f2;display:grid;place-items:center;height:100vh;margin:0}` +
+    `.card{padding:32px 36px;border:1px solid #382546;border-radius:14px;background:#150e1c;text-align:center}` +
+    `.mark{font:700 22px system-ui;letter-spacing:-.5px;margin-bottom:14px}` +
+    `.mark i{font-style:normal;color:#f7931e}.mark b{color:#8b3fe8}` +
+    `h1{font-size:17px;margin:0 0 6px;color:${ok ? "#4ec98a" : "#f2555a"}}` +
+    `p{margin:0;color:#b5a8c2;font-size:13.5px}</style>` +
+    `<div class="card"><div class="mark"><i>O</i><b>A</b> Open Auther</div>` +
+    `<h1>${ok ? "Account connected" : "Sign-in failed"}</h1>` +
     `<p>${ok ? "Open-Auther received the Google credential. You can close this tab." : "You can close this tab and try again."}</p></div>`;
 }
 

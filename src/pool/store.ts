@@ -17,6 +17,7 @@ import { maskEmail, registerSecret, createLogger } from "../logging.js";
 import type {
   Credential,
   CredentialPublic,
+  CustomProtocol,
   CredentialState,
   PoolEvent,
   ModelStat,
@@ -36,6 +37,7 @@ interface Row {
   validation_model?: string | null;
   priority?: number | null;
   excluded_models?: string | null;
+  protocol?: string | null;
   custom_user_agent?: string | null;
   routing_tags?: string | null;
   per_model_quota?: number | null;
@@ -122,6 +124,7 @@ function toCredential(row: Row): Credential {
     validationModel: row.validation_model ?? null,
     priority: row.priority ?? 1,
     excludedModels: parseJsonList(row.excluded_models),
+    protocol: (row.protocol as never) ?? null,
     customUserAgent: row.custom_user_agent ?? null,
     routingTags: parseJsonList(row.routing_tags),
     perModelQuota: Boolean(row.per_model_quota),
@@ -183,6 +186,7 @@ export function toPublic(c: Credential, at: number = now()): CredentialPublic {
     validationModel: c.validationModel,
     priority: c.priority,
     excludedModels: c.excludedModels,
+    protocol: c.protocol,
     customUserAgent: c.customUserAgent,
     routingTags: c.routingTags,
     perModelQuota: c.perModelQuota,
@@ -1179,6 +1183,21 @@ export class CredentialStore extends EventEmitter {
       .prepare("UPDATE credentials SET base_url = ?, updated_at = ? WHERE id = ?")
       .run(clean || null, now(), id);
     this.record("endpoint_updated", id, { baseUrl: clean });
+    return true;
+  }
+
+  /**
+   * Record which wire protocol an endpoint speaks.
+   *
+   * Set by detection. NULL means undetermined, and routing then assumes the
+   * OpenAI shape — the behaviour every credential had before protocols existed.
+   */
+  setProtocol(id: number, protocol: CustomProtocol | null): boolean {
+    if (!this.get(id)) return false;
+    this.db
+      .prepare("UPDATE credentials SET protocol = ?, updated_at = ? WHERE id = ?")
+      .run(protocol, now(), id);
+    this.record("protocol_detected", id, { protocol });
     return true;
   }
 

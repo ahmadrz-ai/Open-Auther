@@ -9,12 +9,21 @@
  * Orbs are labelled with the Auth *name*, never the email.
  */
 
+/*
+ * Orb colours match the dashboard's state palette, and the gateway core is the
+ * logo's orange — it is the identity anchor at the centre of the galaxy.
+ * Kept as RGB triples because canvas gradients need per-stop alpha, which CSS
+ * custom properties cannot supply here.
+ */
 const STATE = {
-  active: { rgb: [143, 191, 159], radius: 0.4, speed: 1.0 },
-  cooling: { rgb: [222, 182, 140], radius: 0.66, speed: 0.55 },
-  dead: { rgb: [196, 131, 123], radius: 0.92, speed: 0.16 },
+  active: { rgb: [78, 201, 138], radius: 0.4, speed: 1.0 },
+  cooling: { rgb: [232, 195, 61], radius: 0.66, speed: 0.55 },
+  dead: { rgb: [242, 85, 90], radius: 0.92, speed: 0.16 },
 };
-const CORE_RGB = [222, 182, 140];
+/** Keyhole orange, the same value as --accent. */
+const CORE_RGB = [247, 147, 30];
+/** The violet from the A, used for the nebula wash and orbit lines. */
+const VIOLET_RGB = [139, 63, 232];
 
 const rgba = ([r, g, b], a) => `rgba(${r},${g},${b},${a})`;
 
@@ -154,14 +163,14 @@ export class GalaxyGraph {
       const twinkle = 0.65 + Math.sin(this.t * 1.1 + s.phase) * 0.35;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(200,215,230,${(s.a * twinkle).toFixed(3)})`;
+      ctx.fillStyle = `rgba(237,232,242,${(s.a * twinkle).toFixed(3)})`;
       ctx.fill();
     }
 
     // --- nebula wash behind the core ---
     const neb = ctx.createRadialGradient(cx, cy, 0, cx, cy, this.maxRadius * 1.15);
-    neb.addColorStop(0, "rgba(222,182,140,0.055)");
-    neb.addColorStop(0.55, "rgba(91,107,124,0.035)");
+    neb.addColorStop(0, rgba(VIOLET_RGB, 0.07));
+    neb.addColorStop(0.55, rgba(CORE_RGB, 0.025));
     neb.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = neb;
     ctx.fillRect(0, 0, W, H);
@@ -241,7 +250,7 @@ export class GalaxyGraph {
       if (focused) {
         ctx.beginPath();
         ctx.arc(x, y, size + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(228,234,240,0.55)";
+        ctx.strokeStyle = rgba(VIOLET_RGB, 0.55);
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -250,7 +259,7 @@ export class GalaxyGraph {
         ctx.font = "500 10.5px 'Segoe UI', system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = focused ? "rgba(228,234,240,0.95)" : "rgba(169,186,195,0.62)";
+        ctx.fillStyle = focused ? "rgba(237,232,242,0.95)" : "rgba(181,168,194,0.62)";
         ctx.fillText(node.cred.name, x, y + size + 11);
       }
     }
@@ -266,7 +275,7 @@ export class GalaxyGraph {
 
     const pulse = 1 + Math.sin(this.t * 1.4) * 0.05;
     const core = ctx.createRadialGradient(cx - 4, cy - 4, 0, cx, cy, 15 * pulse);
-    core.addColorStop(0, "rgba(245,225,203,1)");
+    core.addColorStop(0, "rgba(255,214,150,1)");
     core.addColorStop(1, rgba(CORE_RGB, 0.75));
     ctx.fillStyle = core;
     ctx.beginPath();
@@ -282,7 +291,7 @@ export class GalaxyGraph {
     ctx.font = "600 9.5px 'Segoe UI', system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "rgba(169,186,195,0.75)";
+    ctx.fillStyle = "rgba(181,168,194,0.75)";
     ctx.fillText("GATEWAY", cx, cy + 40);
   }
 
