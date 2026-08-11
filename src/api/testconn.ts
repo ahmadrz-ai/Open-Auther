@@ -17,7 +17,7 @@ import { orderCandidates } from "../core/virtual.js";
 import { canServe } from "../pool/selector.js";
 import { displayName, type CredentialStore } from "../pool/store.js";
 import type { Credential } from "../pool/types.js";
-import type { Router } from "../router.js";
+import { blamesModel, type Router } from "../router.js";
 
 const log = createLogger({ mod: "testconn" });
 
@@ -255,8 +255,16 @@ async function probeOnce(
     terminal: false,
   };
 
-  /** Remember the verdict so later probes and the router skip a dud id. */
-  const remember = (ok: boolean, latencyMs: number, error?: string): void => {
+  /**
+   * Remember the verdict so later probes and the router skip a dud id.
+   *
+   * A failure is only recorded when upstream blamed the model. A busy or
+   * rate-limited model is not a broken one, and permanently benching it for a
+   * transient 503 is how an account with seventeen usable models came to
+   * advertise two.
+   */
+  const remember = (ok: boolean, latencyMs: number, status?: number | null, error?: string): void => {
+    if (!ok && !blamesModel(status ?? null)) return;
     store.setModelStat(credentialId, testModel, {
       ok,
       latencyMs,
@@ -284,7 +292,7 @@ async function probeOnce(
       const latencyMs = Date.now() - started;
       // Pool-level exhaustion says nothing about the model, so it is not
       // recorded against it.
-      if (outcome.code !== "pool_exhausted") remember(false, latencyMs, outcome.code);
+      if (outcome.code !== "pool_exhausted") remember(false, latencyMs, outcome.status, outcome.code);
       return {
         ...base,
         latencyMs,
@@ -304,7 +312,7 @@ async function probeOnce(
       else if (ev.kind === "reasoning") sawReasoning = true;
       else if (ev.kind === "error") {
         const latencyMs = Date.now() - started;
-        remember(false, latencyMs, "upstream_stream_error");
+        remember(false, latencyMs, ev.status, "upstream_stream_error");
         return {
           ...base,
           latencyMs,
@@ -351,7 +359,7 @@ async function probeOnce(
     };
   } catch (err) {
     const latencyMs = Date.now() - started;
-    remember(false, latencyMs, "test_failed");
+    remember(false, latencyMs, null, "test_failed");
     return { ...base, latencyMs, code: "test_failed", message: (err as Error).message };
   } finally {
     clearTimeout(timeout);

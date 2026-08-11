@@ -14,41 +14,63 @@ import {
   toGeminiRequest,
 } from "../src/upstream/antigravity.js";
 import { toCodexRequest } from "../src/upstream/translate.js";
+import { blamesModel } from "../src/router.js";
 
 const body = (messages: Parameters<typeof toCodexRequest>[0]["messages"], extra = {}) =>
   toCodexRequest({ model: "gemini-2.5-flash", messages, ...extra });
 
 describe("Antigravity model catalogue", () => {
-  it("only defaults to models proven live across the configured Antigravity accounts", () => {
-    expect(ANTIGRAVITY_DEFAULT_MODELS).toEqual([
-      "chat_20706",
-      "chat_23310",
+  /*
+   * Asserting the exact array froze a list that included tab-completion,
+   * image-generation and deprecated ids while claiming they were "proven live".
+   * These assert the properties that actually decide whether routing works.
+   */
+  it("carries the current generation the account is entitled to", () => {
+    // Verified serving live on 2026-08-11 against a real Antigravity account.
+    for (const model of [
       "claude-opus-4-6-thinking",
       "claude-sonnet-4-6",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-      "gemini-2.5-flash-thinking",
-      "gemini-2.5-pro",
-      "gemini-3-flash",
-      "gemini-3-flash-agent",
-      "gemini-3.1-flash-image",
-      "gemini-3.1-flash-lite",
-      "gemini-3.1-pro-high",
-      "gemini-3.1-pro-low",
-      "gemini-3.5-flash-extra-low",
-      "gemini-3.5-flash-low",
       "gemini-3.6-flash-high",
-      "gemini-3.6-flash-low",
       "gemini-3.6-flash-medium",
-      "gemini-3.6-flash-tiered",
+      "gemini-3.6-flash-low",
+      "gemini-3.5-flash-low",
+      "gemini-3.1-flash-lite",
+      "gemini-3.1-pro-low",
       "gemini-pro-agent",
       "gpt-oss-120b-medium",
+    ]) {
+      expect(ANTIGRAVITY_DEFAULT_MODELS).toContain(model);
+    }
+  });
+
+  it("excludes surfaces that cannot serve a chat turn", () => {
+    // Tab completion and image generation are in the backend catalogue but
+    // answer "invalid argument" for a chat request.
+    for (const model of [
+      "chat_20706",
+      "chat_23310",
       "tab_flash_lite_preview",
       "tab_jump_flash_lite_preview",
-    ]);
+      "gemini-3.1-flash-image",
+    ]) {
+      expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain(model);
+    }
+  });
+
+  it("excludes ids the backend has deprecated or renamed", () => {
+    // gemini-3.1-pro-high 400s; the backend names gemini-pro-agent instead.
+    expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-3.1-pro-high");
+    expect(ANTIGRAVITY_DEFAULT_MODELS).toContain("gemini-pro-agent");
+
+    // Names from an older client generation that no longer resolve.
     expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-3-flash-preview");
     expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-3-pro-preview");
     expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("claude-sonnet-4.5");
+  });
+
+  it("has no duplicates and is sorted, so diffs stay readable", () => {
+    expect(new Set(ANTIGRAVITY_DEFAULT_MODELS).size).toBe(ANTIGRAVITY_DEFAULT_MODELS.length);
+    expect([...ANTIGRAVITY_DEFAULT_MODELS].sort()).toEqual(ANTIGRAVITY_DEFAULT_MODELS);
   });
 });
 
@@ -221,5 +243,33 @@ describe("mapAntigravityEvent", () => {
   it("ignores frames it does not recognise", () => {
     expect(mapAntigravityEvent({})).toEqual([]);
     expect(mapAntigravityEvent({ response: {} })).toEqual([]);
+  });
+});
+
+describe("blamesModel", () => {
+  /*
+   * The rule that broke Antigravity: every failure was recorded as the model's
+   * fault, so a busy model was benched permanently. An account serving
+   * seventeen models advertised two.
+   */
+  it("blames the model only when the request itself was rejected", () => {
+    expect(blamesModel(400)).toBe(true); // invalid/unknown model
+    expect(blamesModel(404)).toBe(true); // no such model for this account
+    expect(blamesModel(501)).toBe(true);
+    expect(blamesModel(505)).toBe(true);
+  });
+
+  it("does not blame the model for capacity, quota or outages", () => {
+    // "No capacity available for model gemini-2.5-pro" is a 503 — try later.
+    expect(blamesModel(503)).toBe(false);
+    expect(blamesModel(429)).toBe(false);
+    expect(blamesModel(500)).toBe(false);
+    expect(blamesModel(502)).toBe(false);
+    expect(blamesModel(504)).toBe(false);
+  });
+
+  it("does not blame the model when there is no status at all", () => {
+    // A transport error says nothing about the model.
+    expect(blamesModel(null)).toBe(false);
   });
 });

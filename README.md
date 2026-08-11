@@ -26,6 +26,9 @@ open-auther   canonical command
 openauther    compatibility alias
 ```
 
+The npm package name is always `open-auther`, hyphenated. `openauther` is only a
+command alias, so `npm install openauther` fails with a 404.
+
 A local `npm install open-auther` does not place the command on your global PATH. Use `npx`, or install globally.
 
 Or install the CLI globally:
@@ -65,7 +68,30 @@ open-auther providers discover --json
 open-auther doctor                  Diagnose local gateway readiness
 open-auther doctor --json           Machine-readable diagnostics
 open-auther key show|new            Show or create gateway API keys
+open-auther uninstall [--yes] [--purge-cache]
+                                    Remove the package and all local data
 ```
+
+## Uninstall
+
+```bash
+open-auther uninstall
+```
+
+It asks for confirmation, then removes the npm package (global and local) and
+every local data path: config, database, and OAuth tokens. `--yes` skips the
+prompt.
+
+npm's cache is kept by default. To force the next install to refetch from the
+registry rather than serve a cached tarball, add `--purge-cache` (this clears
+npm's whole cache, because npm no longer supports evicting a single package):
+
+```bash
+open-auther uninstall --yes --purge-cache
+```
+
+Stop a running gateway first. On Windows an active process holds the database
+open, and the command will report which path it could not delete.
 
 The router rejects known capability mismatches before sending an upstream request. Vision, tool, and reasoning requirements are inferred from the request; virtual models such as `fast` and `quality` only rank candidates that can satisfy those requirements. Unknown models remain usable for ordinary text requests and can be made explicit through capability overrides.
 
@@ -74,7 +100,7 @@ The router rejects known capability mismatches before sending an upstream reques
 Environment variables use the `AI_AUTHER_` prefix for compatibility with existing installations:
 
 ```text
-AI_AUTHER_HOME        Data directory (default: ~/.open-auther)
+AI_AUTHER_HOME        Data directory (default: ~/.ai-auther)
 AI_AUTHER_PORT        Listen port (default: 8787)
 AI_AUTHER_HOST        Bind address (default: 127.0.0.1)
 AI_AUTHER_API_KEY     Override the gateway API key

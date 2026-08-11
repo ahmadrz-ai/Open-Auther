@@ -17,6 +17,7 @@ import { RefreshError, ensureFreshToken } from "./core/refresh.js";
 import { buildCatalogue } from "./core/catalogue.js";
 import { capabilitiesFor, meetsRequirements, requirementsForRequest, type CapabilityRequirements } from "./core/capabilities.js";
 import { isVirtualModel, orderCandidates, type Candidate, type VirtualModel } from "./core/virtual.js";
+import type { UpstreamFailure } from "./pool/errors.js";
 import { canServe, selectCredential } from "./pool/selector.js";
 import type { CredentialStore } from "./pool/store.js";
 import type { Credential } from "./pool/types.js";
@@ -46,6 +47,20 @@ export interface RouteFailure {
 }
 
 export type RouteOutcome = RouteSuccess | RouteFailure;
+
+/**
+ * Does this status mean "that model is wrong" rather than "try again later"?
+ *
+ * Only a rejection of the request itself is the model's fault. 400 and 404 mean
+ * the id is unknown or not permitted for this account; 501/505 mean the surface
+ * does not support the call. Everything else — 429 quota, 5xx capacity and
+ * outages, transport errors (status null) — is temporary, and marking a model
+ * dead for it silently shrinks the pool.
+ */
+export function blamesModel(status: number | null): boolean {
+  if (status === null) return false;
+  return status === 400 || status === 404 || status === 501 || status === 505;
+}
 
 /** Events that mean the model has actually started answering. */
 function isContent(ev: CodexEvent): boolean {
@@ -202,8 +217,19 @@ export class Router {
         continue;
       }
 
-      // Anything else means this id does not actually serve chat on this
-      // connection. Remember it, so the policy stops choosing it.
+      /*
+       * Only blame the model when upstream said the model is the problem.
+       *
+       * Recording every failure permanently was wrong and did real damage: an
+       * Antigravity model answering 503 "No capacity available for model X" is
+       * busy, not broken, and once marked bad it was excluded from every later
+       * ordering. An account offering seventeen working models showed two.
+       */
+      if (!blamesModel(outcome.status)) {
+        log.info("virtual_model_unavailable", { virtual, model, status: outcome.status });
+        continue;
+      }
+
       for (const c of ordered) {
         if (c.model !== model) continue;
         this.store.setModelStat(c.credential.id, model, {

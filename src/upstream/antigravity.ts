@@ -306,8 +306,148 @@ export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] 
   return out;
 }
 
-/** Ask the backend which models this account may use. */
+/** One model as the Antigravity backend describes it. */
+export interface AntigravityModel {
+  id: string;
+  /** Human name from the backend, e.g. "Gemini 3.6 Flash (High)". */
+  displayName: string | null;
+  thinking: boolean;
+  vision: boolean;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  /** 0..1 of this model's quota left, or null when the backend omits it. */
+  remainingFraction: number | null;
+  /** ISO timestamp when the quota refills, or null. */
+  resetTime: string | null;
+  /** Serves chat. False for tab-completion and image-generation surfaces. */
+  chat: boolean;
+  /** Set when the backend says this id is superseded. */
+  replacedBy: string | null;
+}
+
+export interface AntigravityCatalogue {
+  models: AntigravityModel[];
+  /** The id the IDE itself defaults to. A sensible probe target. */
+  defaultModel: string | null;
+}
+
+/**
+ * Ask the backend what this specific account may use, and keep what it says.
+ *
+ * The response is far richer than a list of ids: display names, thinking and
+ * vision support, context sizes, per-model quota with a reset time, plus which
+ * ids are tab-completion or image surfaces and which are deprecated. The old
+ * version flattened all of that to a sorted string array, so the dashboard
+ * showed raw ids like `gemini-3.6-flash-high`, could not tell a chat model from
+ * a tab-completion one, and had no quota figure to display even though the
+ * backend hands one over.
+ */
+export async function fetchAntigravityCatalogue(
+  credential: Credential,
+): Promise<AntigravityCatalogue> {
+  const projectId = projectIdOf(credential);
+  if (!projectId || !credential.accessToken) return { models: [], defaultModel: null };
+
+  for (const base of ANTIGRAVITY.runtimeBaseUrls) {
+    try {
+      const res = await fetch(`${base}/v1internal:fetchAvailableModels`, {
+        method: "POST",
+        headers: { ...contentHeaders(credential.accessToken), accept: "application/json" },
+        body: JSON.stringify({ project: projectId }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) continue;
+
+      const data = (await res.json()) as Record<string, unknown>;
+      const raw = data.models;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+
+      const asIds = (value: unknown): string[] =>
+        Array.isArray(value) ? value.map(String) : [];
+
+      // Surfaces that exist in the catalogue but cannot serve a chat turn.
+      const nonChat = new Set([
+        ...asIds(data.tabModelIds),
+        ...asIds(data.imageGenerationModelIds),
+        ...asIds(data.audioTranscriptionModelIds),
+      ]);
+
+      // `deprecatedModelIds` maps old id -> { newModelId }. Honouring it is what
+      // stops `gemini-3.1-pro-high` being probed forever: the backend 400s that
+      // id and names `gemini-pro-agent` as its replacement.
+      const deprecated =
+        data.deprecatedModelIds && typeof data.deprecatedModelIds === "object"
+          ? (data.deprecatedModelIds as Record<string, { newModelId?: string }>)
+          : {};
+
+      const models: AntigravityModel[] = [];
+      for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+        const m = (value ?? {}) as Record<string, unknown>;
+        const quota = (m.quotaInfo ?? {}) as Record<string, unknown>;
+        const displayName = typeof m.displayName === "string" ? m.displayName : null;
+
+        models.push({
+          id,
+          displayName,
+          thinking: m.supportsThinking === true,
+          vision: m.supportsImages === true,
+          contextWindow: typeof m.maxTokens === "number" ? m.maxTokens : null,
+          maxOutputTokens: typeof m.maxOutputTokens === "number" ? m.maxOutputTokens : null,
+          remainingFraction:
+            typeof quota.remainingFraction === "number" ? quota.remainingFraction : null,
+          resetTime: typeof quota.resetTime === "string" ? quota.resetTime : null,
+          /*
+           * A chat model has a display name and is not a listed tab/image
+           * surface. The internal `chat_20706` / `tab_*` entries carry no
+           * display name, which is the backend's own tell that they are not
+           * user-facing models.
+           */
+          chat: !nonChat.has(id) && displayName !== null,
+          replacedBy: deprecated[id]?.newModelId ?? null,
+        });
+      }
+
+      if (models.length) {
+        models.sort((a, b) => a.id.localeCompare(b.id));
+        const fallback = typeof data.defaultAgentModelId === "string" ? data.defaultAgentModelId : null;
+        return { models, defaultModel: fallback };
+      }
+    } catch {
+      // try the next host
+    }
+  }
+  return { models: [], defaultModel: null };
+}
+
+/**
+ * Chat model ids for this account, deprecated ids remapped to replacements.
+ *
+ * This is the list the pool routes on, so it must contain only ids that can
+ * actually answer.
+ */
 export async function fetchAntigravityModels(credential: Credential): Promise<string[]> {
+  const { models } = await fetchAntigravityCatalogue(credential);
+  if (models.length) {
+    const ids = new Set<string>();
+    for (const m of models) {
+      if (!m.chat) continue;
+      // Prefer the replacement, but only if the backend also lists it.
+      const target =
+        m.replacedBy && models.some((x) => x.id === m.replacedBy) ? m.replacedBy : m.id;
+      ids.add(target);
+    }
+    if (ids.size) return [...ids].sort();
+  }
+  return await fetchAntigravityModelsLegacy(credential);
+}
+
+/**
+ * Older shapes of the same endpoint, kept as a fallback.
+ *
+ * Some hosts answer with arrays rather than the keyed `models` object, and a
+ * connection that only gets the array form should still work.
+ */
+async function fetchAntigravityModelsLegacy(credential: Credential): Promise<string[]> {
   const projectId = projectIdOf(credential);
   if (!projectId || !credential.accessToken) return [];
 

@@ -1048,7 +1048,10 @@ export class CredentialStore extends EventEmitter {
       throw new Error("Priority must be a whole number between 1 and 999.");
     }
 
-    const clean = (list: string[] | undefined, fallback: string[]) =>
+    // The fallback may legitimately be null: for `customModels`, null means
+    // "fall back to the provider's default list", which is not the same thing
+    // as an empty list ("this credential serves nothing").
+    const clean = <T extends string[] | null>(list: string[] | undefined, fallback: T) =>
       list ? [...new Set(list.map((m) => m.trim()).filter(Boolean))] : fallback;
 
     const excluded = clean(patch.excludedModels, current.excludedModels);
@@ -1070,7 +1073,7 @@ export class CredentialStore extends EventEmitter {
       .run(
         priority,
         excluded.length ? JSON.stringify(excluded) : null,
-        custom.length ? JSON.stringify(custom) : null,
+        custom?.length ? JSON.stringify(custom) : null,
         ua,
         tags.length ? JSON.stringify(tags) : null,
         perModel ? 1 : 0,
@@ -1081,7 +1084,7 @@ export class CredentialStore extends EventEmitter {
     this.record("settings_updated", id, {
       priority,
       excluded: excluded.length,
-      customModels: custom.length,
+      customModels: custom?.length ?? 0,
       tags: tags.length,
       perModelQuota: perModel,
     });
@@ -1123,6 +1126,31 @@ export class CredentialStore extends EventEmitter {
     this.db
       .prepare("UPDATE credentials SET model_stats = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(stats), now(), id);
+  }
+
+  /**
+   * Forget recorded probe results for a credential.
+   *
+   * Needed whenever the model list is re-discovered: stats keyed by ids the
+   * provider no longer offers are dead weight, and a stat recorded against an
+   * old naming scheme or an outdated client version is worse than no stat — it
+   * hides a model that now works. Pass `failedOnly` to keep proven successes.
+   */
+  clearModelStats(id: number, failedOnly = false): number {
+    const current = this.get(id);
+    if (!current) return 0;
+
+    const kept = failedOnly
+      ? Object.fromEntries(Object.entries(current.modelStats).filter(([, s]) => s.ok))
+      : {};
+    const dropped = Object.keys(current.modelStats).length - Object.keys(kept).length;
+    if (!dropped) return 0;
+
+    this.db
+      .prepare("UPDATE credentials SET model_stats = ?, updated_at = ? WHERE id = ?")
+      .run(Object.keys(kept).length ? JSON.stringify(kept) : null, now(), id);
+    this.record("model_stats_cleared", id, { dropped, failedOnly });
+    return dropped;
   }
 
   /** Hide every model whose last probe failed. */

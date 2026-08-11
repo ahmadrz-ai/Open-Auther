@@ -14,7 +14,7 @@ import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/e
 import type { CredentialStore } from "../pool/store.js";
 import type { Credential } from "../pool/types.js";
 import type { Config } from "../config.js";
-import { refreshAntigravityToken } from "./antigravity.js";
+import { AntigravityRefreshError, refreshAntigravityToken } from "./antigravity.js";
 import { accessTokenExpiry, decodeIdToken } from "./jwt.js";
 
 const log = createLogger({ mod: "refresh" });
@@ -94,14 +94,31 @@ export async function ensureFreshToken(
         log.info("refresh_ok", { credential: credentialId, provider: "antigravity" });
         return store.get(credentialId)!;
       } catch (err) {
-        // A rejected Google refresh token does not come back; treat it as final
-        // so the credential leaves rotation instead of retrying forever.
-        store.markDead(credentialId, "antigravity_refresh_failed");
+        /*
+         * Only a rejected grant is final.
+         *
+         * Killing the credential on any failure meant one 503 or dropped
+         * connection permanently removed a working Google account: it went
+         * `dead` with `antigravity_refresh_failed` and stayed there, even though
+         * the very next refresh attempt would have succeeded. Cool it down
+         * instead and let it come back.
+         */
+        const revoked = err instanceof AntigravityRefreshError ? err.revoked : false;
+        if (revoked) {
+          store.markDead(credentialId, "antigravity_refresh_failed");
+        } else {
+          store.markCooling(
+            credentialId,
+            now() + Math.max(60, cfg.defaultCooldownSeconds),
+            "antigravity_refresh_unavailable",
+          );
+        }
+
         throw new RefreshError(
           {
-            kind: "terminal",
-            status: 401,
-            code: "antigravity_refresh_failed",
+            kind: revoked ? "terminal" : "transient",
+            status: err instanceof AntigravityRefreshError ? err.status : 500,
+            code: revoked ? "antigravity_refresh_failed" : "antigravity_refresh_unavailable",
             message: (err as Error).message,
             resetsAt: null,
             usageLimited: false,

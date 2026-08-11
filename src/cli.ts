@@ -19,6 +19,7 @@ import { configureLogging, createLogger, maskEmail } from "./logging.js";
 import { openBrowser } from "./core/login.js";
 import { BUILTIN_AUTH_ADAPTERS } from "./core/auth-adapters.js";
 import { importCredentials } from "./core/import.js";
+import { ensureFreshToken } from "./core/refresh.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
@@ -30,6 +31,11 @@ import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
 const VERSION = packageJson.version;
+/**
+ * The npm package name — hyphenated. `openauther` is only a bin alias, so
+ * `npm install openauther` 404s; anything talking to the registry must use this.
+ */
+const PACKAGE_NAME = packageJson.name;
 
 const C = {
   reset: "[0m",
@@ -379,8 +385,26 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
         continue;
       }
       try {
-        const models = await fetchAntigravityModels(credential);
-        if (models.length) store.setCustomModels(credential.id, models);
+        /*
+         * Refresh before asking. Antigravity access tokens last about an hour,
+         * and discovery was using whatever was on disk — so on a stale token
+         * every account 401'd and was reported as "no visible models", which
+         * reads as an entitlement problem rather than an expired token. Nothing
+         * could ever refresh the catalogue.
+         */
+        const fresh = await ensureFreshToken(store, cfg, credential.id).catch(() => credential);
+        const models = await fetchAntigravityModels(fresh);
+        if (models.length) {
+          store.setCustomModels(credential.id, models);
+          /*
+           * Re-discovery invalidates recorded failures. They were measured
+           * against the previous list — and, for Antigravity, often against an
+           * older client version the backend has since stopped accepting — so
+           * keeping them would hide models that now answer perfectly well.
+           * Successes are kept; they are still evidence.
+           */
+          store.clearModelStats(credential.id, true);
+        }
         results.push({
           credentialId: credential.id,
           providerId: credential.providerId,
@@ -391,8 +415,9 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
           via: "antigravity_fetchAvailableModels",
           attempts: 2,
           message: models.length
-            ? "Account-specific Antigravity model catalogue loaded."
-            : "Antigravity returned no visible models for this account.",
+            ? `Account-specific Antigravity model catalogue loaded (${models.length} chat models).`
+            : "Antigravity refused the catalogue request. The stored token may be " +
+              "expired beyond refresh — re-run: open-auther auth login --provider antigravity",
         });
       } catch (err) {
         results.push({
@@ -614,26 +639,98 @@ async function cmdUpdate(args: string[]): Promise<void> {
 
 // ------------------------------------------------------------------- uninstall
 
-function uninstallPackage(): Promise<{ ok: boolean; message: string }> {
+/**
+ * Run one npm command and capture what it said.
+ *
+ * `shell: true` on Windows is load-bearing, not cargo cult. npm ships as
+ * `npm.cmd`, and since Node's CVE-2024-27980 hardening `spawn` refuses to
+ * execute a `.cmd` without a shell — it throws `EINVAL` *synchronously*, before
+ * any `error` listener can attach. That is what broke this command outright:
+ * the throw escaped, so uninstall died before deleting a single file.
+ */
+function runNpm(args: string[]): Promise<{ ok: boolean; code: number | null; output: string }> {
   return new Promise((resolveResult) => {
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn(npmCommand, ["uninstall", "-g", "open-auther"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.once("error", (err) => resolveResult({ ok: false, message: `npm uninstall failed: ${err.message}` }));
-    child.once("close", (code) =>
-      resolveResult(
-        code === 0
-          ? { ok: true, message: "Global npm package removed." }
-          : { ok: false, message: `npm uninstall failed${stderr.trim() ? `: ${stderr.trim()}` : ` (exit ${code})`}` },
-      ),
-    );
+    const windows = process.platform === "win32";
+    let child;
+    try {
+      /*
+       * On Windows npm is `npm.cmd`, and a shell is required to run it. The
+       * whole command goes in as one string with no args array: passing an args
+       * array alongside `shell: true` raises DEP0190, because Node concatenates
+       * rather than escapes. Every argument here is a literal or the package
+       * name from our own package.json, so there is nothing to escape.
+       */
+      child = windows
+        ? spawn(["npm", ...args].join(" "), {
+            stdio: ["ignore", "pipe", "pipe"],
+            shell: true,
+            windowsHide: true,
+          })
+        : spawn("npm", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    } catch (err) {
+      // spawn can throw synchronously (EINVAL, ENOENT), before any listener
+      // could see it. Swallowing that is what made uninstall die outright.
+      resolveResult({ ok: false, code: null, output: (err as Error).message });
+      return;
+    }
+
+    let output = "";
+    child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    child.once("error", (err) => resolveResult({ ok: false, code: null, output: err.message }));
+    child.once("close", (code) => resolveResult({ ok: code === 0, code, output: output.trim() }));
   });
+}
+
+interface PackageRemoval {
+  ok: boolean;
+  message: string;
+  details: string[];
+}
+
+/**
+ * Remove the package however it was installed.
+ *
+ * Only removing `-g` was not enough: the README's own first instruction is a
+ * plain `npm install open-auther`, and a local install left behind by a global
+ * uninstall means the next `npm install` resolves from `node_modules` and never
+ * tests the published tarball.
+ */
+async function uninstallPackage(purgeCache: boolean): Promise<PackageRemoval> {
+  const details: string[] = [];
+  let anyRemoved = false;
+  let hardFailure: string | null = null;
+
+  for (const [label, args] of [
+    ["global", ["uninstall", "-g", PACKAGE_NAME]],
+    ["local", ["uninstall", PACKAGE_NAME]],
+  ] as const) {
+    const result = await runNpm([...args, "--no-audit", "--no-fund"]);
+    if (result.ok) {
+      // npm exits 0 whether or not it had anything to remove, so say what it
+      // actually reported rather than claiming a removal that did not happen.
+      const touched = /removed \d+ package/i.test(result.output);
+      anyRemoved ||= touched;
+      details.push(`${label}: ${touched ? "removed" : "nothing installed"}`);
+    } else {
+      details.push(`${label}: failed (${result.output.split("\n")[0] ?? `exit ${result.code}`})`);
+      hardFailure ??= `npm ${args.join(" ")} failed`;
+    }
+  }
+
+  if (purgeCache) {
+    // npm dropped per-package cache eviction, so this is all-or-nothing and
+    // therefore opt-in. It matters for repeat installs: without it npm can
+    // serve a cached tarball and a "fresh" install proves nothing.
+    const result = await runNpm(["cache", "clean", "--force"]);
+    details.push(`npm cache: ${result.ok ? "purged" : `purge failed (${result.output.split("\n")[0] ?? ""})`}`);
+  }
+
+  return {
+    ok: hardFailure === null,
+    message: hardFailure ?? (anyRemoved ? "npm package removed." : "No npm install of this package was found."),
+    details,
+  };
 }
 
 async function cmdUninstall(args: string[]): Promise<void> {
@@ -659,7 +756,16 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
-  const packageResult = await uninstallPackage();
+  const purgeCache = args.includes("--purge-cache");
+  const packageResult = await uninstallPackage(purgeCache);
+
+  /*
+   * Delete the data regardless of what npm did.
+   *
+   * These are independent jobs. npm failing — not installed, EACCES, no network
+   * — is no reason to leave OAuth tokens and a credential database on disk when
+   * the user asked for everything gone.
+   */
   const { rmSync, existsSync } = await import("node:fs");
   const paths = new Set([dataDir, configPath, dbPath, `${dbPath}-wal`, `${dbPath}-shm`]);
   const failures: string[] = [];
@@ -674,15 +780,31 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  out();
+  out(`  ${C.dim}npm:${C.reset}`);
+  for (const detail of packageResult.details) out(`    ${C.dim}${detail}${C.reset}`);
+  out(`  ${C.dim}data: removed ${removed} path(s) under ${dataDir}${C.reset}`);
+
   if (!packageResult.ok || failures.length) {
-    out(`  ${C.red}Uninstall incomplete.${C.reset}`);
-    out(`  ${C.dim}${packageResult.message}${C.reset}`);
+    out();
+    out(`  ${C.yellow}Uninstall incomplete.${C.reset}`);
+    if (!packageResult.ok) out(`  ${C.red}${packageResult.message}${C.reset}`);
     for (const failure of failures) out(`  ${C.red}${failure}${C.reset}`);
+    if (failures.length) {
+      out(`  ${C.dim}A running gateway holds the database open. Stop it and re-run.${C.reset}`);
+    }
     process.exitCode = 1;
     return;
   }
-  out(`  ${C.green}open-auther completely removed.${C.reset}`);
-  out(`  ${C.dim}Removed package and ${removed} local data path(s). npm cache was preserved.${C.reset}`);
+
+  out();
+  out(`  ${C.green}${PACKAGE_NAME} completely removed.${C.reset}`);
+  if (!purgeCache) {
+    out(`  ${C.dim}npm's cache was kept. To force the next install to refetch:${C.reset}`);
+    out(`  ${C.dim}  ${PACKAGE_NAME} uninstall --yes --purge-cache${C.reset}`);
+  }
+  out(`  ${C.dim}Reinstall with:  npm install -g ${PACKAGE_NAME}${C.reset}`);
+  out(`  ${C.dim}(the package is "${PACKAGE_NAME}"; "openauther" is only the command alias)${C.reset}`);
 }
 
 // --------------------------------------------------------------------- misc
@@ -727,7 +849,8 @@ function usage(): void {
     open-auther providers discover     Probe and persist provider endpoint/model metadata
     open-auther providers discover --json Machine-readable discovery results
     open-auther update                  Check npm for a newer release
-    open-auther uninstall [--yes]      Remove package and all local data
+    open-auther uninstall [--yes] [--purge-cache]
+                                        Remove package and all local data
     open-auther update --json           Machine-readable update status
     open-auther doctor                  Diagnose local gateway readiness
     open-auther doctor --json           Machine-readable diagnostics

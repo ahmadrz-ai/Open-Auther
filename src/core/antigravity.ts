@@ -133,12 +133,23 @@ export function bootstrapHeaders(accessToken: string): Record<string, string> {
 export const loadCodeAssistMetadata = () => ({ ideType: "ANTIGRAVITY" });
 
 /**
- * Models the Cloud Code backend serves through Antigravity. Replaced by the
- * live list once `fetchAvailableModels` has been called for an account.
+ * Chat models the Cloud Code backend serves through Antigravity.
+ *
+ * A starting point only — `fetchAntigravityCatalogue` replaces this with the
+ * account's real entitlements, which is the sole authority on what a given
+ * login may use. Entitlements differ per account and Google revises the list
+ * often, so treat any mismatch as this constant being stale.
+ *
+ * Deliberately excluded, because they are in the backend's catalogue but cannot
+ * serve a chat turn and only produce confusing failures if routed to:
+ *   chat_20706, chat_23310, tab_flash_lite_preview, tab_jump_flash_lite_preview
+ *     — tab-completion surfaces, listed under `tabModelIds`
+ *   gemini-3.1-flash-image — image generation, listed under
+ *     `imageGenerationModelIds`
+ *   gemini-3.1-pro-high — the backend reports it deprecated in favour of
+ *     `gemini-pro-agent` and answers 400 for it
  */
 export const ANTIGRAVITY_DEFAULT_MODELS = [
-  "chat_20706",
-  "chat_23310",
   "claude-opus-4-6-thinking",
   "claude-sonnet-4-6",
   "gemini-2.5-flash",
@@ -147,9 +158,7 @@ export const ANTIGRAVITY_DEFAULT_MODELS = [
   "gemini-2.5-pro",
   "gemini-3-flash",
   "gemini-3-flash-agent",
-  "gemini-3.1-flash-image",
   "gemini-3.1-flash-lite",
-  "gemini-3.1-pro-high",
   "gemini-3.1-pro-low",
   "gemini-3.5-flash-extra-low",
   "gemini-3.5-flash-low",
@@ -159,8 +168,6 @@ export const ANTIGRAVITY_DEFAULT_MODELS = [
   "gemini-3.6-flash-tiered",
   "gemini-pro-agent",
   "gpt-oss-120b-medium",
-  "tab_flash_lite_preview",
-  "tab_jump_flash_lite_preview",
 ];
 
 // ---------------------------------------------------------------------------
@@ -387,6 +394,35 @@ export interface RefreshedAntigravityToken {
   expiresAt: number | null;
 }
 
+/**
+ * A failed refresh, carrying enough detail to tell fatal from temporary.
+ *
+ * Without this the caller only had a message string, so it treated every
+ * failure as a revoked grant and killed the credential. A single 503 or dropped
+ * connection permanently removed a working account from the pool.
+ */
+export class AntigravityRefreshError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    super(message);
+    this.name = "AntigravityRefreshError";
+  }
+
+  /**
+   * True only when Google actually rejected the grant.
+   *
+   * OAuth 2 signals a dead refresh token with 400 `invalid_grant`; a 401 means
+   * the client credentials were refused. Both are final. 429 and 5xx are not.
+   */
+  get revoked(): boolean {
+    if (this.status === 401) return true;
+    return this.status === 400 && /invalid_grant|invalid_request/i.test(this.detail);
+  }
+}
+
 export async function refreshAntigravityToken(refreshToken: string): Promise<RefreshedAntigravityToken> {
   const body = new URLSearchParams({
     refresh_token: refreshToken,
@@ -400,9 +436,18 @@ export async function refreshAntigravityToken(refreshToken: string): Promise<Ref
     body,
     signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok) throw new Error(`Google token refresh failed (HTTP ${response.status})`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new AntigravityRefreshError(
+      `Google token refresh failed (HTTP ${response.status})`,
+      response.status,
+      detail,
+    );
+  }
   const tokens = (await response.json()) as GoogleTokenResponse;
-  if (!tokens.access_token) throw new Error("Google token refresh returned no access token");
+  if (!tokens.access_token) {
+    throw new AntigravityRefreshError("Google token refresh returned no access token", 500, "");
+  }
   registerSecret(tokens.access_token);
   return {
     accessToken: tokens.access_token,
