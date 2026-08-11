@@ -496,6 +496,7 @@ export function providerRoutes(
           ? { customUserAgent: String(body.customUserAgent) }
           : {}),
         ...(body.perModelQuota !== undefined ? { perModelQuota: Boolean(body.perModelQuota) } : {}),
+        ...(body.customModels !== undefined ? { customModels: list(body.customModels) } : {}),
       });
       if (!updated) {
         return errorResponse(c, 404, "No such credential.", "invalid_request_error", "not_found");

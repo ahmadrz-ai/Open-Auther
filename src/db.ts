@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -240,6 +240,12 @@ const MIGRATIONS: string[] = [
        ELSE substr(custom_models, 1, length(custom_models) - 1) || ',"kimi-k3"]'
      END
    WHERE provider_id = 'kimi-web';
+  `,
+
+  // v13 — persist the dashboard provider selection. NULL preserves normal
+  // all-provider rotation for existing conversations.
+  `
+  ALTER TABLE conversations ADD COLUMN provider_id TEXT;
   `,
 ];
 

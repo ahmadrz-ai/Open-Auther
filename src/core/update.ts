@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import packageJson from "../../package.json";
 
 export const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/open-auther/latest";
@@ -23,6 +24,21 @@ export interface UpdateCheckOptions {
   currentVersion?: string;
   now?: () => number;
   timeoutMs?: number;
+}
+
+export interface InstallLatestOptions {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface InstallLatestResult {
+  ok: boolean;
+  command: string;
+  args: string[];
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
 }
 
 type ParsedVersion = {
@@ -126,4 +142,22 @@ export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Install the latest public npm release into the global npm prefix. */
+export function installLatestPackage(options: InstallLatestOptions = {}): Promise<InstallLatestResult> {
+  const command = options.command ?? (process.platform === "win32" ? "npm.cmd" : "npm");
+  const args = options.args ?? ["install", "-g", "open-auther@latest"];
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      stdio: "inherit",
+      shell: false,
+    });
+    child.once("error", reject);
+    child.once("close", (exitCode, signal) => {
+      resolve({ ok: exitCode === 0, command, args, exitCode, signal });
+    });
+  });
 }

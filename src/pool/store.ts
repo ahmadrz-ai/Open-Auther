@@ -1034,6 +1034,7 @@ export class CredentialStore extends EventEmitter {
     patch: {
       priority?: number;
       excludedModels?: string[];
+      customModels?: string[];
       customUserAgent?: string | null;
       routingTags?: string[];
       perModelQuota?: boolean;
@@ -1051,6 +1052,7 @@ export class CredentialStore extends EventEmitter {
       list ? [...new Set(list.map((m) => m.trim()).filter(Boolean))] : fallback;
 
     const excluded = clean(patch.excludedModels, current.excludedModels);
+    const custom = clean(patch.customModels, current.customModels);
     const tags = clean(patch.routingTags, current.routingTags);
     const ua =
       patch.customUserAgent === undefined
@@ -1061,13 +1063,14 @@ export class CredentialStore extends EventEmitter {
     this.db
       .prepare(
         `UPDATE credentials
-            SET priority = ?, excluded_models = ?, custom_user_agent = ?,
+            SET priority = ?, excluded_models = ?, custom_models = ?, custom_user_agent = ?,
                 routing_tags = ?, per_model_quota = ?, updated_at = ?
           WHERE id = ?`,
       )
       .run(
         priority,
         excluded.length ? JSON.stringify(excluded) : null,
+        custom.length ? JSON.stringify(custom) : null,
         ua,
         tags.length ? JSON.stringify(tags) : null,
         perModel ? 1 : 0,
@@ -1078,6 +1081,7 @@ export class CredentialStore extends EventEmitter {
     this.record("settings_updated", id, {
       priority,
       excluded: excluded.length,
+      customModels: custom.length,
       tags: tags.length,
       perModelQuota: perModel,
     });

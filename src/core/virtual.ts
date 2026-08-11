@@ -113,24 +113,26 @@ export function orderCandidates(
 
   if (virtual === "fast") {
     ordered = [...candidates].sort((a, b) => {
-      const pa = proven(a);
-      const pb = proven(b);
-      if (pa !== pb) return pb - pa;
-
       const la = measuredLatency(candidates, a.model);
       const lb = measuredLatency(candidates, b.model);
+      // A measured round-trip is stronger evidence than a generic success flag.
       if (la !== null && lb !== null) return la - lb;
       if (la !== null) return -1;
       if (lb !== null) return 1;
-      // Nothing measured: the cheapest end is the only honest prior.
+
+      const pa = proven(a);
+      const pb = proven(b);
+      if (pa !== pb) return pb - pa;
+      // No measurements: choose the lighter/faster-looking tier as a prior.
       return -byQuality(a, b);
     });
   } else if (virtual === "quality") {
     ordered = [...candidates].sort((a, b) => {
-      const pa = proven(a);
-      const pb = proven(b);
-      if (pa !== pb) return pb - pa;
-      return byQuality(a, b);
+      // Quality is capability-first. Probe success is only a tie-breaker, never
+      // a reason for a weak model to outrank a stronger available model.
+      const quality = byQuality(a, b);
+      if (quality !== 0) return quality;
+      return proven(b) - proven(a);
     });
   } else {
     // auto: whatever is nearest to hand, but never a model already known bad.

@@ -21,7 +21,7 @@ import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
 import { fetchCodexModels } from "./upstream/codex.js";
 import { inspectStorage } from "./storage.js";
-import { checkForUpdate } from "./core/update.js";
+import { checkForUpdate, installLatestPackage } from "./core/update.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
 
@@ -541,7 +541,20 @@ async function cmdUpdate(args: string[]): Promise<void> {
   out(`  ${C.bold}open-auther update${C.reset}`);
   if (result.state === "update_available") {
     out(`  ${C.yellow}${result.message}${C.reset}`);
-    out(`  ${C.dim}Install with:${C.reset} ${C.cyan}${result.installCommand}${C.reset}`);
+    out(`  ${C.dim}Installing with:${C.reset} ${C.cyan}${result.installCommand}${C.reset}`);
+    try {
+      const install = await installLatestPackage();
+      if (!install.ok) {
+        out(`  ${C.red}Update failed (exit ${install.exitCode ?? "unknown"}).${C.reset}`);
+        process.exitCode = 1;
+        return;
+      }
+      out(`  ${C.green}Updated successfully to v${result.latestVersion}.${C.reset}`);
+    } catch (error) {
+      out(`  ${C.red}Update failed:${C.reset} ${(error as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
   } else if (result.state === "up_to_date") {
     out(`  ${C.green}${result.message}${C.reset}`);
   } else {

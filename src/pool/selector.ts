@@ -70,6 +70,8 @@ export interface SelectOptions {
   model?: string;
   /** Tags the caller asked for, from the `x-ai-auther-tags` header. */
   tags?: string[];
+  /** Restrict rotation to one provider id when the dashboard selects it. */
+  providerId?: string | null;
   at?: number;
   /** Injectable for deterministic tests. */
   random?: () => number;
@@ -89,6 +91,8 @@ export function selectCredential(
   let pool = store
     .all()
     .filter((c) => isAvailable(c, at) && !exclude.has(c.id) && c.accessToken !== null);
+
+  if (opts.providerId) pool = pool.filter((c) => c.providerId === opts.providerId);
 
   // Provider affinity, and it fails closed. The previous version only steered
   // `gemini-` models and fell back to the whole pool when no Gemini key was

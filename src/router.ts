@@ -66,6 +66,31 @@ export class Router {
     private readonly store: CredentialStore,
   ) {}
 
+  /** Persist first-token latency so `fast` learns from normal chat traffic. */
+  private async *recordModelEvents(
+    credential: Credential,
+    model: string,
+    startedAt: number,
+    events: AsyncGenerator<CodexEvent>,
+  ): AsyncGenerator<CodexEvent> {
+    let firstContentAt: number | null = null;
+    let ok = true;
+    try {
+      for await (const event of events) {
+        if (firstContentAt === null && isContent(event)) firstContentAt = Date.now();
+        if (event.kind === "error") ok = false;
+        yield event;
+      }
+    } finally {
+      this.store.setModelStat(credential.id, model, {
+        ok,
+        latencyMs: Math.max(0, (firstContentAt ?? Date.now()) - startedAt),
+        ts: now(),
+        ...(ok ? {} : { error: "upstream_stream_error" }),
+      });
+    }
+  }
+
   /** Apply the consequences of a failure to the credential that produced it. */
   private penalise(credential: Credential, failure: UpstreamFailure, model?: string): void {
     if (failure.kind === "terminal") {
@@ -119,12 +144,12 @@ export class Router {
     virtual: VirtualModel,
     req: ChatCompletionRequest,
     signal: AbortSignal,
-    opts: { tags?: string[]; sticky?: string | null },
+    opts: { tags?: string[]; sticky?: string | null; providerId?: string | null },
   ): Promise<RouteOutcome> {
     const requirements = requirementsForRequest(req);
     const ordered = orderCandidates(
       virtual,
-      this.candidatePairs(opts.tags, requirements),
+      this.candidatePairs(opts.tags, requirements, opts.providerId ?? null),
       this.cfg.modelCapabilities,
       opts.sticky ?? null,
     );
@@ -204,12 +229,17 @@ export class Router {
   }
 
   /** Every (credential, model) pair that could serve a request right now. */
-  private candidatePairs(tags?: string[], requirements?: CapabilityRequirements): Candidate[] {
+  private candidatePairs(
+    tags?: string[],
+    requirements?: CapabilityRequirements,
+    providerId?: string | null,
+  ): Candidate[] {
     const at = now();
     this.store.wakeExpired(at);
 
     const out: Candidate[] = [];
     for (const credential of this.store.available(at)) {
+      if (providerId && credential.providerId !== providerId) continue;
       if (!credential.accessToken) continue;
       // Tagged connections are reserved; untagged serve anything.
       if (credential.routingTags.length && !tags?.some((t) => credential.routingTags.includes(t))) {
@@ -318,7 +348,12 @@ export class Router {
   async chat(
     req: ChatCompletionRequest,
     signal: AbortSignal,
-    opts: { pinnedCredentialId?: number | null; tags?: string[]; sticky?: string | null } = {},
+    opts: {
+      pinnedCredentialId?: number | null;
+      tags?: string[];
+      sticky?: string | null;
+      providerId?: string | null;
+    } = {},
   ): Promise<RouteOutcome> {
     /*
      * Resolve `auto` / `fast` / `quality` to a real model before anything
@@ -384,7 +419,12 @@ export class Router {
       const selected =
         pinned !== null
           ? (tried.has(pinned) ? null : this.store.get(pinned))
-          : selectCredential(this.store, this.cfg.rotation, { exclude: tried, model: body.model, tags: opts.tags });
+          : selectCredential(this.store, this.cfg.rotation, {
+              exclude: tried,
+              model: body.model,
+              tags: opts.tags,
+              providerId: opts.providerId ?? null,
+            });
       if (!selected) break;
 
       tried.add(selected.id);
@@ -405,6 +445,7 @@ export class Router {
       }
 
       // --- upstream call -------------------------------------------------
+      const modelStartedAt = Date.now();
       this.store.markUsed(credential.id);
       const result = await callCodex(this.cfg, credential, body, signal);
 
@@ -531,7 +572,12 @@ export class Router {
         credential,
         model: req.model,
         attempts,
-        events: replay(buffered, iter),
+        events: this.recordModelEvents(
+          credential,
+          body.model,
+          modelStartedAt,
+          replay(buffered, iter),
+        ),
       };
     }
 

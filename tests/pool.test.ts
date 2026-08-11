@@ -79,6 +79,21 @@ describe("store", () => {
     expect(pub.emailMasked).toBe("se***n@example.com");
   });
 
+  it("updates custom model lists through advanced settings", () => {
+    const store = makeStore();
+    const c = store.add(
+      credentialInput({
+        providerType: "antigravity",
+        customModels: ["gemini-3-pro-preview", "gemini-2.5-flash"],
+      }),
+    );
+
+    const updated = store.updateAdvanced(c.id, { customModels: ["gemini-2.5-flash"] });
+
+    expect(updated?.customModels).toEqual(["gemini-2.5-flash"]);
+    expect(store.get(c.id)?.customModels).toEqual(["gemini-2.5-flash"]);
+  });
+
   it("skips a cooling credential until its cooldown elapses", () => {
     const store = makeStore();
     const c = store.add(credentialInput());

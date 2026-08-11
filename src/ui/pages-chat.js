@@ -99,6 +99,8 @@ export const chat = {
 
     const el = (id) => host.querySelector(id);
 
+    const VIRTUAL_IDS = new Set(["auto", "fast", "quality"]);
+
     /* ------------------------------------------------------- rendering */
 
     const renderCaps = () => {
@@ -155,6 +157,7 @@ export const chat = {
         }
         const meta = [
           m.credentialName ? `served by ${esc(m.credentialName)}` : null,
+          m.model ? `model ${esc(m.model)}` : null,
           m.tokens ? `${compact(m.tokens)} tokens` : null,
           m.latencyMs ? `${m.latencyMs}ms` : null,
         ].filter(Boolean).join(" · ");
@@ -196,9 +199,12 @@ export const chat = {
        */
       const updateModelsForProvider = () => {
         const provider = el("#c-provider").value || "all";
-        const models = (meta.models ?? []).filter(
-          (m) => provider === "all" || m.providers.includes(provider),
-        );
+        const models = (meta.models ?? []).filter((m) => {
+          // Auto/fast/quality are global policies. When a concrete provider is
+          // selected, show only that provider's actual model catalogue.
+          if (provider !== "all" && VIRTUAL_IDS.has(m.id)) return false;
+          return provider === "all" || m.providers.includes(provider);
+        });
 
         const modelSelect = el("#c-model");
 
@@ -233,9 +239,19 @@ export const chat = {
           )
           .join("");
 
-        // Re-query: `modelSelect` may have been replaced above.
+        // Preserve the current model when it is valid; otherwise select the
+        // first model in the newly selected provider/policy scope.
         const wanted = current?.model ?? meta.defaultModel;
-        el("#c-model").value = models.some((m) => m.id === wanted) ? wanted : models[0].id;
+        const next = models.some((m) => m.id === wanted) ? wanted : models[0].id;
+        el("#c-model").value = next;
+        if (current && (current.model !== next || current.providerId !== (provider === "all" ? null : provider))) {
+          current.model = next;
+          current.providerId = provider === "all" ? null : provider;
+          void post(`/admin/chat/conversations/${current.id}`, {
+            model: next,
+            providerId: current.providerId,
+          });
+        }
         renderCaps();
       };
 
@@ -271,6 +287,10 @@ export const chat = {
 
     /** Point the provider selector at whatever can serve the given model. */
     const syncProviderToModel = (model) => {
+      if (VIRTUAL_IDS.has(model)) {
+        el("#c-provider").value = "all";
+        return;
+      }
       const entry = meta?.models?.find((m) => m.id === model);
       if (entry?.providers?.length) el("#c-provider").value = entry.providers[0];
     };
@@ -399,8 +419,9 @@ export const chat = {
 
             if (name === "start") {
               assistant.credentialName = payload.credentialName;
+              assistant.model = payload.model;
               el("#c-foot").textContent =
-                `Served by ${payload.credentialName}${payload.attempts > 1 ? ` after ${payload.attempts} attempts` : ""}`;
+                `Served by ${payload.credentialName} · ${payload.model}${payload.attempts > 1 ? ` after ${payload.attempts} attempts` : ""}`;
             } else if (name === "delta") {
               assistant.content += payload.text;
               renderThread();
@@ -429,6 +450,9 @@ export const chat = {
         setSending(false);
         abort = null;
         await loadConversations();
+        // Restore keyboard flow after the streamed request finishes. The input
+        // was disabled during send, and focus otherwise remains on the button.
+        requestAnimationFrame(() => el("#c-input")?.focus());
       }
     };
 

@@ -11,6 +11,8 @@ export interface Conversation {
   id: number;
   title: string;
   model: string;
+  /** null means all providers; otherwise routing is restricted to this provider. */
+  providerId: string | null;
   reasoningEffort: string;
   /** null means normal rotation; a value pins every turn to that Auth. */
   pinnedCredentialId: number | null;
@@ -36,6 +38,7 @@ interface ConversationRow {
   id: number;
   title: string | null;
   model: string | null;
+  provider_id: string | null;
   reasoning_effort: string | null;
   pinned_credential_id: number | null;
   created_at: number;
@@ -60,6 +63,7 @@ const toConversation = (r: ConversationRow): Conversation => ({
   id: r.id,
   title: r.title ?? "New chat",
   model: r.model ?? "",
+  providerId: r.provider_id ?? null,
   reasoningEffort: r.reasoning_effort ?? "medium",
   pinnedCredentialId: r.pinned_credential_id,
   createdAt: r.created_at,
@@ -105,6 +109,7 @@ export class ChatStore {
   createConversation(input: {
     title?: string;
     model: string;
+    providerId?: string | null;
     reasoningEffort?: string;
     pinnedCredentialId?: number | null;
   }): Conversation {
@@ -112,12 +117,13 @@ export class ChatStore {
     this.db
       .prepare(
         `INSERT INTO conversations
-           (title, model, reasoning_effort, pinned_credential_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+           (title, model, provider_id, reasoning_effort, pinned_credential_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.title ?? "New chat",
         input.model,
+        input.providerId ?? null,
         input.reasoningEffort ?? "medium",
         input.pinnedCredentialId ?? null,
         ts,
@@ -134,6 +140,7 @@ export class ChatStore {
     patch: {
       title?: string;
       model?: string;
+      providerId?: string | null;
       reasoningEffort?: string;
       pinnedCredentialId?: number | null;
     },
@@ -144,12 +151,13 @@ export class ChatStore {
     this.db
       .prepare(
         `UPDATE conversations
-            SET title = ?, model = ?, reasoning_effort = ?, pinned_credential_id = ?, updated_at = ?
+            SET title = ?, model = ?, provider_id = ?, reasoning_effort = ?, pinned_credential_id = ?, updated_at = ?
           WHERE id = ?`,
       )
       .run(
         patch.title ?? existing.title,
         patch.model ?? existing.model,
+        patch.providerId === undefined ? existing.providerId : patch.providerId,
         patch.reasoningEffort ?? existing.reasoningEffort,
         patch.pinnedCredentialId === undefined
           ? existing.pinnedCredentialId

@@ -93,16 +93,21 @@ export function chatUiRoutes(
       return (providerDef(cred.providerId)?.defaultModels ?? []).includes(model);
     };
 
-    const realModels = [...declared].map((id) => {
-      const servers = creds.filter((cred) => offers(cred, id));
-      return {
-        id,
-        capabilities: capabilitiesFor(id, cfg.modelCapabilities),
-        // Providers holding at least one credential that offers this model.
-        providers: [...new Set(servers.map((s) => s.providerId))],
-        available: servers.some((s) => s.state === "active"),
-      };
-    });
+    const realModels = [...declared]
+      .map((id) => {
+        const servers = creds.filter((cred) => offers(cred, id));
+        return {
+          id,
+          capabilities: capabilitiesFor(id, cfg.modelCapabilities),
+          // Providers holding at least one credential that offers this model.
+          providers: [...new Set(servers.map((s) => s.providerId))],
+          available: servers.some((s) => s.state === "active"),
+        };
+      })
+      // Config can contain historical/default ids that no connected credential
+      // actually serves. They must not leak into the picker: provider filtering
+      // is based on real offers, not merely on the global config list.
+      .filter((model) => model.providers.length > 0);
 
     // Keep the built-in Chat picker aligned with the Settings catalogue.
     // `auto`, `fast`, and `quality` are routing policies, not provider models,
@@ -149,6 +154,9 @@ export function chatUiRoutes(
   app.post("/conversations", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     const model = typeof body.model === "string" && body.model ? body.model : cfg.defaultModel;
+    const providerId = typeof body.providerId === "string" && body.providerId && body.providerId !== "all"
+      ? body.providerId
+      : null;
     const effort = isReasoningLevel(body.reasoningEffort) ? body.reasoningEffort : DEFAULT_REASONING;
     const pinned =
       typeof body.pinnedCredentialId === "number" ? body.pinnedCredentialId : null;
@@ -156,6 +164,7 @@ export function chatUiRoutes(
     return c.json({
       conversation: chat.createConversation({
         model,
+        providerId,
         reasoningEffort: effort,
         pinnedCredentialId: pinned,
       }),
@@ -180,6 +189,9 @@ export function chatUiRoutes(
     const patch: Parameters<ChatStore["updateConversation"]>[1] = {};
     if (typeof body.title === "string") patch.title = body.title.slice(0, 120);
     if (typeof body.model === "string") patch.model = body.model;
+    if (body.providerId === null || typeof body.providerId === "string") {
+      patch.providerId = body.providerId === "all" ? null : body.providerId as string | null;
+    }
     if (isReasoningLevel(body.reasoningEffort)) patch.reasoningEffort = body.reasoningEffort;
     if (body.pinnedCredentialId === null || typeof body.pinnedCredentialId === "number") {
       patch.pinnedCredentialId = body.pinnedCredentialId as number | null;
@@ -273,7 +285,7 @@ export function chatUiRoutes(
               : undefined,
           },
           controller.signal,
-          { pinnedCredentialId: conversation.pinnedCredentialId },
+          { pinnedCredentialId: conversation.pinnedCredentialId, providerId: conversation.providerId },
         );
       } catch (err) {
         return void (await fail((err as Error).message, "router_failed"));
@@ -290,7 +302,7 @@ export function chatUiRoutes(
           credentialId: outcome.credential.id,
           credentialName: servedBy,
           attempts: outcome.attempts,
-          model: conversation.model,
+          model: outcome.model,
         }),
       });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkForUpdate, compareVersions } from "../src/core/update.js";
+import { checkForUpdate, compareVersions, installLatestPackage } from "../src/core/update.js";
 
 describe("update checker", () => {
   it("compares stable semantic versions", () => {
@@ -46,5 +46,15 @@ describe("update checker", () => {
     expect(result.state).toBe("error");
     expect(result.latestVersion).toBeNull();
     expect(result.message).toMatch(/could not check/i);
+  });
+
+  it("can run the configured npm install command", async () => {
+    const result = await installLatestPackage({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
   });
 });
