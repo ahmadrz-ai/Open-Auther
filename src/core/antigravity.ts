@@ -137,11 +137,7 @@ export const loadCodeAssistMetadata = () => ({ ideType: "ANTIGRAVITY" });
  * live list once `fetchAvailableModels` has been called for an account.
  */
 export const ANTIGRAVITY_DEFAULT_MODELS = [
-  "gemini-3-pro-preview",
-  "gemini-3-flash-preview",
-  "gemini-2.5-pro",
   "gemini-2.5-flash",
-  "claude-sonnet-4.5",
   "gpt-oss-120b-medium",
 ];
 

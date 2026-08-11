@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { ANTIGRAVITY_DEFAULT_MODELS } from "../src/core/antigravity.js";
 import {
   buildEnvelope,
   mapAntigravityEvent,
@@ -16,6 +17,16 @@ import { toCodexRequest } from "../src/upstream/translate.js";
 
 const body = (messages: Parameters<typeof toCodexRequest>[0]["messages"], extra = {}) =>
   toCodexRequest({ model: "gemini-2.5-flash", messages, ...extra });
+
+describe("Antigravity model catalogue", () => {
+  it("only defaults to models proven live across the configured Antigravity accounts", () => {
+    expect(ANTIGRAVITY_DEFAULT_MODELS).toEqual(["gemini-2.5-flash", "gpt-oss-120b-medium"]);
+    expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-3-flash-preview");
+    expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-3-pro-preview");
+    expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("gemini-2.5-pro");
+    expect(ANTIGRAVITY_DEFAULT_MODELS).not.toContain("claude-sonnet-4.5");
+  });
+});
 
 describe("toGeminiRequest", () => {
   it("maps assistant turns to the model role", () => {
