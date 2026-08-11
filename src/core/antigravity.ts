@@ -137,8 +137,30 @@ export const loadCodeAssistMetadata = () => ({ ideType: "ANTIGRAVITY" });
  * live list once `fetchAvailableModels` has been called for an account.
  */
 export const ANTIGRAVITY_DEFAULT_MODELS = [
+  "chat_20706",
+  "chat_23310",
+  "claude-opus-4-6-thinking",
+  "claude-sonnet-4-6",
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash-thinking",
+  "gemini-2.5-pro",
+  "gemini-3-flash",
+  "gemini-3-flash-agent",
+  "gemini-3.1-flash-image",
+  "gemini-3.1-flash-lite",
+  "gemini-3.1-pro-high",
+  "gemini-3.1-pro-low",
+  "gemini-3.5-flash-extra-low",
+  "gemini-3.5-flash-low",
+  "gemini-3.6-flash-high",
+  "gemini-3.6-flash-low",
+  "gemini-3.6-flash-medium",
+  "gemini-3.6-flash-tiered",
+  "gemini-pro-agent",
   "gpt-oss-120b-medium",
+  "tab_flash_lite_preview",
+  "tab_jump_flash_lite_preview",
 ];
 
 // ---------------------------------------------------------------------------
