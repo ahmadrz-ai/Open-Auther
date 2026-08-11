@@ -321,9 +321,47 @@ export async function fetchAntigravityModels(credential: Credential): Promise<st
       });
       if (!res.ok) continue;
 
-      const data = (await res.json()) as { models?: Array<{ modelId?: string; name?: string }> };
-      const models = (data.models ?? [])
-        .map((m) => String(m.modelId ?? m.name ?? "").replace(/^models\//, ""))
+      const data = (await res.json()) as Record<string, unknown>;
+      const modelValue = data.models;
+      const arraySummary = Object.fromEntries(
+        Object.entries(data)
+          .filter(([, value]) => Array.isArray(value))
+          .map(([key, value]) => [key, (value as unknown[]).length]),
+      );
+      const modelKeys =
+        modelValue && typeof modelValue === "object" && !Array.isArray(modelValue)
+          ? Object.keys(modelValue as Record<string, unknown>)
+          : [];
+      log.debug("antigravity_models_response", {
+        base,
+        keys: Object.keys(data),
+        arrays: arraySummary,
+        modelKeys,
+      });
+
+      const modelLists = [
+        data.models,
+        data.availableModels,
+        data.supportedModels,
+        data.modelIds,
+        data.agentModelSorts,
+        data.commandModelIds,
+        data.tabModelIds,
+      ];
+      const modelObjects = modelValue && typeof modelValue === "object" && !Array.isArray(modelValue)
+        ? Object.entries(modelValue as Record<string, unknown>).map(([id, value]) => ({ id, value }))
+        : [];
+      const candidates = modelLists.filter((value): value is unknown[] => Array.isArray(value)).flat();
+      const models = [
+        ...modelObjects.map(({ id }) => id),
+        ...candidates.map((m) => {
+          if (typeof m === "string") return m;
+          if (!m || typeof m !== "object") return "";
+          const item = m as Record<string, unknown>;
+          return String(item.modelId ?? item.model ?? item.name ?? item.id ?? "");
+        }),
+      ]
+        .map((m) => m.replace(/^models\//, "").trim())
         .filter(Boolean);
       if (models.length) return [...new Set(models)].sort();
     } catch {

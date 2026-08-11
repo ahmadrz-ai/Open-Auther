@@ -19,6 +19,7 @@ import { importCredentials } from "./core/import.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
+import { fetchAntigravityModels } from "./upstream/antigravity.js";
 import { fetchCodexModels } from "./upstream/codex.js";
 import { inspectStorage } from "./storage.js";
 import { checkForUpdate, installLatestPackage } from "./core/update.js";
@@ -358,6 +359,49 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
           via: "codex_models",
           attempts: 1,
           message: `Codex model discovery failed: ${(err as Error).message}`,
+        });
+      }
+      continue;
+    }
+
+    if (credential.providerType === "antigravity") {
+      if (!credential.accessToken || !credential.baseUrl) {
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: false,
+          skipped: true,
+          message: "No Antigravity access token or Cloud Code project id is stored.",
+        });
+        continue;
+      }
+      try {
+        const models = await fetchAntigravityModels(credential);
+        if (models.length) store.setCustomModels(credential.id, models);
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: models.length > 0,
+          skipped: false,
+          baseUrl: credential.baseUrl,
+          models,
+          via: "antigravity_fetchAvailableModels",
+          attempts: 2,
+          message: models.length
+            ? "Account-specific Antigravity model catalogue loaded."
+            : "Antigravity returned no visible models for this account.",
+        });
+      } catch (err) {
+        results.push({
+          credentialId: credential.id,
+          providerId: credential.providerId,
+          ok: false,
+          skipped: false,
+          baseUrl: credential.baseUrl,
+          models: [],
+          via: "antigravity_fetchAvailableModels",
+          attempts: 2,
+          message: `Antigravity model discovery failed: ${(err as Error).message}`,
         });
       }
       continue;
