@@ -507,6 +507,35 @@ export class Router {
 
       if (!result.ok) {
         lastFailure = result.failure;
+
+        /*
+         * A rejected *model* is not a rejected request.
+         *
+         * This used to return immediately, because the failure is classified
+         * `client`. So asking for `qwen/qwen3.8-max` — served by three custom
+         * providers in the pool — could pick a ChatGPT credential first, get
+         * "not supported when using Codex", and fail the whole request after
+         * one attempt while the providers that serve it were never tried.
+         *
+         * Record the pairing and rotate. The stat makes the next request skip
+         * this credential for this model, so the pool learns instead of
+         * repeating the mistake.
+         */
+        if (result.failure.kind === "client" && result.failure.modelUnsupported) {
+          this.store.setModelStat(credential.id, body.model, {
+            ok: false,
+            latencyMs: Date.now() - modelStartedAt,
+            ts: now(),
+            error: result.failure.code ?? "model_unsupported",
+          });
+          log.info("model_unsupported_here", {
+            credential: credential.id,
+            model: body.model,
+            code: result.failure.code,
+          });
+          continue;
+        }
+
         if (result.failure.kind === "client") {
           return {
             ok: false,

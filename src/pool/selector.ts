@@ -58,9 +58,20 @@ export function canServe(credential: Credential, model: string): boolean {
       return !isGoogle;
     }
 
-    default:
-      // ChatGPT OAuth, and anything unlabelled.
+    default: {
+      /*
+       * ChatGPT OAuth, and anything unlabelled.
+       *
+       * A discovered model list is authoritative here too. Without this the
+       * only test was "not a Google model", so a ChatGPT credential looked
+       * capable of `qwen/qwen3.8-max` and could win the rotation ahead of the
+       * custom providers that actually serve it — then answered "not supported
+       * when using Codex with a ChatGPT account".
+       */
+      const declared = (credential.customModels ?? []).map((m) => m.trim()).filter(Boolean);
+      if (declared.length) return declared.includes(model);
       return !isGoogle;
+    }
   }
 }
 

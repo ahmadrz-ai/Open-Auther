@@ -40,6 +40,17 @@ export interface UpstreamFailure {
   resetsAt: number | null;
   /** True when upstream explicitly said the usage limit was hit. */
   usageLimited: boolean;
+  /**
+   * Upstream rejected the *model*, not the request and not the account.
+   *
+   * The distinction decides whether the request can continue. A ChatGPT
+   * credential answering "that model is not supported when using Codex" is not
+   * a client error — the caller asked for something another credential in the
+   * pool serves perfectly well. Marked failures make the router move to the
+   * next credential and remember that this model does not work on this one,
+   * instead of failing the whole request after a single attempt.
+   */
+  modelUnsupported?: boolean;
 }
 
 /** Pull the various shapes an error code can arrive in out of a parsed body. */
@@ -139,6 +150,34 @@ export function classifyHttp(status: number, body: unknown, rawText?: string): U
         "The Codex backend rejected this model/account combination. The OAuth credential remains active; verify the account-scoped Codex catalogue and model selection.",
       resetsAt: null,
       usageLimited: false,
+      // The credential is fine for its own models; only this pairing is not.
+      modelUnsupported: true,
+    };
+  }
+
+  /*
+   * "No such model" from any provider.
+   *
+   * Aggregators disagree about which of a few hundred ids they carry, so the
+   * honest reading is "not on this credential", never "not anywhere". Rotating
+   * is what turns a pool of providers into one that can actually serve a model
+   * some of its members carry.
+   */
+  if (
+    (status === 404 || status === 400) &&
+    (/(model_not_found|model_not_supported|unknown_model|unsupported_model)/i.test(code ?? "") ||
+      /model .*(not exist|not found|does not exist|is not available|unknown model|not supported)/i.test(
+        `${message} ${rawText ?? ""}`,
+      ))
+  ) {
+    return {
+      kind: "client",
+      status,
+      code: code ?? "model_not_found",
+      message,
+      resetsAt: null,
+      usageLimited: false,
+      modelUnsupported: true,
     };
   }
 

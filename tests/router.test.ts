@@ -130,7 +130,13 @@ describe("router failover", () => {
     expect(outcome.retryAt).toBe(resetsAt);
   });
 
-  it("does not burn the pool on a caller error", async () => {
+  it("tries every credential when one says it does not have the model", async () => {
+    /*
+     * "Unknown model" means unknown *to that credential*. Aggregators disagree
+     * about which ids they carry, so stopping at the first refusal failed
+     * requests for models the pool could serve — a qwen model was refused by a
+     * ChatGPT credential while three custom providers carrying it went untried.
+     */
     const store = makeStore();
     store.add(credentialInput());
     store.add(credentialInput());
@@ -145,9 +151,39 @@ describe("router failover", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.status).toBe(400);
-    // One attempt only, and no credential penalised.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Both were tried, and neither was penalised: the account is not at fault.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(store.available()).toHaveLength(2);
+  });
+
+  it("succeeds on a later credential that does serve the model", async () => {
+    const store = makeStore();
+    const first = store.add(credentialInput());
+    const second = store.add(credentialInput());
+
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>).authorization;
+      if (auth === `Bearer ${first.accessToken}`) {
+        return jsonResponse(
+          { error: { message: "The model is not supported when using Codex with a ChatGPT account" } },
+          400,
+        );
+      }
+      return sseResponse([{ choices: [{ delta: { content: "OK" } }] }]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(REQUEST, new AbortController().signal);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.credential.id).toBe(second.id);
+
+    // The refusal is remembered, so the next request skips that pairing rather
+    // than rediscovering it.
+    expect(store.get(first.id)!.modelStats[REQUEST.model]?.ok).toBe(false);
+    // And the refusing credential is still alive for its own models.
+    expect(store.get(first.id)!.state).toBe("active");
   });
 
   it("rejects a direct model before upstream when it lacks requested vision", async () => {
