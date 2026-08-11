@@ -48,6 +48,32 @@ describe("update checker", () => {
     expect(result.message).toMatch(/could not check/i);
   });
 
+  it("rejects rather than throwing when the command cannot be spawned", async () => {
+    /*
+     * The regression this guards: spawn("npm.cmd", args, {shell:false}) throws
+     * EINVAL synchronously on Windows under Node's CVE-2024-27980 hardening, so
+     * `open-auther update` reported "Update failed: spawn EINVAL" and updated
+     * nothing. A failure must arrive as a rejection the CLI can report.
+     */
+    await expect(
+      installLatestPackage({ command: "definitely-not-a-real-binary-xyz", args: [] }),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  it("installs the hyphenated package name, which is the only one on npm", async () => {
+    // `openauther` is a bin alias only; `npm install openauther` 404s.
+    let seen: string[] = [];
+    await installLatestPackage({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+    }).then((r) => (seen = r.args));
+    expect(seen).toEqual(["-e", "process.exit(0)"]);
+
+    // And the default, which is what the CLI actually uses.
+    const { INSTALL_COMMAND } = await import("../src/core/update.js");
+    expect(INSTALL_COMMAND).toContain("open-auther@latest");
+  });
+
   it("can run the configured npm install command", async () => {
     const result = await installLatestPackage({
       command: process.execPath,

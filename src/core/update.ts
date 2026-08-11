@@ -144,17 +144,49 @@ export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<
   }
 }
 
-/** Install the latest public npm release into the global npm prefix. */
+/**
+ * Install the latest public npm release into the global npm prefix.
+ *
+ * The shell is required for `npm.cmd`. Since Node's CVE-2024-27980 hardening,
+ * `spawn` refuses to execute a `.cmd` without one and throws `EINVAL`
+ * *synchronously* — which made `open-auther update` report
+ * "Update failed: spawn EINVAL" on every Windows machine and update nothing.
+ *
+ * It is scoped to batch files rather than applied to every platform: a caller
+ * that supplies a real executable path (the tests pass `process.execPath`, which
+ * contains spaces) must still be spawned directly, since a shell would split it
+ * on those spaces.
+ */
 export function installLatestPackage(options: InstallLatestOptions = {}): Promise<InstallLatestResult> {
   const command = options.command ?? (process.platform === "win32" ? "npm.cmd" : "npm");
-  const args = options.args ?? ["install", "-g", "open-auther@latest"];
+  const args = options.args ?? ["install", "-g", `${packageJson.name}@latest`];
+  const needsShell = /\.(cmd|bat)$/i.test(command);
+
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: "inherit",
-      shell: false,
-    });
+    let child;
+    try {
+      child = needsShell
+        ? // One string, no args array: pairing an args array with `shell: true`
+          // raises DEP0190. Nothing here needs escaping — every argument is a
+          // literal or our own package name.
+          spawn([command, ...args].join(" "), {
+            cwd: options.cwd,
+            env: options.env ?? process.env,
+            stdio: "inherit",
+            shell: true,
+            windowsHide: true,
+          })
+        : spawn(command, args, {
+            cwd: options.cwd,
+            env: options.env ?? process.env,
+            stdio: "inherit",
+            shell: false,
+          });
+    } catch (err) {
+      reject(err as Error);
+      return;
+    }
+
     child.once("error", reject);
     child.once("close", (exitCode, signal) => {
       resolve({ ok: exitCode === 0, command, args, exitCode, signal });
