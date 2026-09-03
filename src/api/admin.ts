@@ -21,6 +21,7 @@ import {
   type Config,
 } from "../config.js";
 import { capabilitiesFor } from "../core/capabilities.js";
+import { mergeDiscovered } from "../core/model-metadata.js";
 import { buildCatalogue } from "../core/catalogue.js";
 import { listModels, testConnection } from "../compress/caveman.js";
 import type { CavemanHistory } from "../compress/history.js";
@@ -536,10 +537,15 @@ export function adminRoutes(
   app.post("/settings/capabilities/:model", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
-      updateModelCapabilities(cfg, c.req.param("model"), body);
+      const model = c.req.param("model");
+      updateModelCapabilities(cfg, model, body);
       return c.json({
         ok: true,
-        resolved: capabilitiesFor(c.req.param("model"), cfg.modelCapabilities),
+        resolved: capabilitiesFor(
+          model,
+          cfg.modelCapabilities,
+          mergeDiscovered(store.all().map((cred) => cred.modelMetadata), model),
+        ),
       });
     } catch (err) {
       return bad(c, err);

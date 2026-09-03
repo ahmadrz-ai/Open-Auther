@@ -20,6 +20,7 @@
 
 import type { Credential } from "../pool/types.js";
 import { capabilitiesFor, type ModelCapabilities } from "./capabilities.js";
+import { lookupModel } from "./model-metadata.js";
 
 export const VIRTUAL_MODELS = ["auto", "fast", "quality"] as const;
 export type VirtualModel = (typeof VIRTUAL_MODELS)[number];
@@ -105,9 +106,18 @@ export function orderCandidates(
     return stat.ok ? 1 : -1;
   };
 
+  /*
+   * Score against what the candidate's own provider published, not just the
+   * model id. `quality` was ranking on the built-in table alone, so every
+   * model outside it scored as having no reasoning, no vision and an unknown
+   * context window — leaving vendor naming as the only real signal and
+   * routinely putting a discovered Pro model below a hard-coded mini one.
+   */
+  const capsOf = (c: Candidate) =>
+    capabilitiesFor(c.model, overrides, lookupModel(c.credential.modelMetadata, c.model));
+
   const byQuality = (a: Candidate, b: Candidate) =>
-    qualityScore(b.model, capabilitiesFor(b.model, overrides)) -
-    qualityScore(a.model, capabilitiesFor(a.model, overrides));
+    qualityScore(b.model, capsOf(b)) - qualityScore(a.model, capsOf(a));
 
   let ordered: Candidate[];
 

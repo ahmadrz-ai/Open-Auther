@@ -14,6 +14,12 @@
 
 import { randomUUID } from "node:crypto";
 import { ANTIGRAVITY, contentHeaders, streamUrls } from "../core/antigravity.js";
+import {
+  describeVersionSource,
+  markRejected,
+  resolveAntigravityVersion,
+} from "../core/antigravity-version.js";
+import { discoveredModel, type DiscoveredModel } from "../core/model-metadata.js";
 import { createLogger } from "../logging.js";
 import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/errors.js";
 import type { Credential } from "../pool/types.js";
@@ -247,6 +253,15 @@ export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] 
        * upgrade notice. Turn it back into the failure it is.
        */
       if (typeof part.text === "string" && CLIENT_TOO_OLD.test(part.text)) {
+        /*
+         * Retire the version that was just refused. The next request re-reads
+         * the machine, so updating the IDE fixes this without a restart — and
+         * without it, a stale fallback would present the same rejected version
+         * forever and every answer would be this notice.
+         */
+        const refused = resolveAntigravityVersion();
+        markRejected(refused.version);
+
         return [
           {
             kind: "error",
@@ -254,8 +269,12 @@ export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] 
             body: {
               code: "antigravity_client_outdated",
               message:
-                "Antigravity rejected this client version. Set " +
-                "AI_AUTHER_ANTIGRAVITY_VERSION to the version the IDE currently ships.",
+                `Antigravity refused client version ${refused.version} ` +
+                `(${describeVersionSource(refused)}). ` +
+                (refused.source === "installed"
+                  ? "Update the Antigravity IDE, or set AI_AUTHER_ANTIGRAVITY_VERSION to override."
+                  : "Install the Antigravity IDE so the version can be read from it, " +
+                    "or set AI_AUTHER_ANTIGRAVITY_VERSION to the version it currently ships."),
             },
           },
         ];
@@ -417,6 +436,50 @@ export async function fetchAntigravityCatalogue(
     }
   }
   return { models: [], defaultModel: null };
+}
+
+/**
+ * Everything this account may use, as records the pool can store.
+ *
+ * The per-model facts are the point. `fetchAntigravityModels` reduces this to
+ * a sorted list of ids, which is all routing needs — but throwing the rest
+ * away is what left the capability gate guessing, so discovery calls this and
+ * keeps the whole record.
+ *
+ * A deprecated id is kept rather than dropped, carrying its `replacedBy`, so
+ * a client still asking for the retired name can be redirected instead of
+ * being told the model does not exist.
+ */
+export async function fetchAntigravityDiscovery(
+  credential: Credential,
+): Promise<DiscoveredModel[]> {
+  const { models } = await fetchAntigravityCatalogue(credential);
+
+  if (models.length) {
+    return models.map((m) => {
+      // A replacement is only usable if the backend also lists it.
+      const replacedBy =
+        m.replacedBy && models.some((x) => x.id === m.replacedBy) ? m.replacedBy : null;
+      return discoveredModel(m.id, {
+        displayName: m.displayName,
+        vision: m.vision,
+        reasoning: m.thinking,
+        // Every Cloud Code chat surface takes function declarations; the
+        // backend publishes no per-model flag to say otherwise.
+        tools: m.chat ? true : null,
+        contextWindow: m.contextWindow,
+        replacedBy,
+        // A retired id must not stay in the routing list, but its record has
+        // to survive so the replacement can be looked up.
+        chat: m.chat && !replacedBy,
+      });
+    });
+  }
+
+  // The array-shaped fallback carries ids only. Records with every flag null
+  // resolve through the family heuristic, which does not gate.
+  const ids = await fetchAntigravityModelsLegacy(credential);
+  return ids.map((id) => discoveredModel(id));
 }
 
 /**

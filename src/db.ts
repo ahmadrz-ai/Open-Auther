@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -256,6 +256,28 @@ const MIGRATIONS: string[] = [
   // routing falls back to the OpenAI shape, so existing rows behave as before.
   `
   ALTER TABLE credentials ADD COLUMN protocol TEXT;
+  `,
+
+  // v15 — what the provider said about each model, not just its name.
+  //
+  // Discovery already received per-model facts and discarded them: Antigravity
+  // publishes `supportsImages`, `supportsThinking`, `maxTokens` and a
+  // `deprecatedModelIds` remap, and OpenRouter publishes input modalities.
+  // Flattening that to a list of ids left the capability gate with only a
+  // curated table of GPT names, so every other model resolved to "unknown" —
+  // whose vision flag is false — and image requests were refused locally for
+  // models that accept images. NULL means "nothing discovered yet", which
+  // behaves exactly as before.
+  //
+  // {model: {displayName, vision, reasoning, tools, contextWindow,
+  //          replacedBy, chat, discoveredAt}}
+  //
+  // `models_synced_at` is what the periodic refresh checks against its TTL.
+  // NULL means never synced, so the first sweep after an upgrade refreshes
+  // every existing connection.
+  `
+  ALTER TABLE credentials ADD COLUMN model_metadata TEXT;
+  ALTER TABLE credentials ADD COLUMN models_synced_at INTEGER;
   `,
 ];
 

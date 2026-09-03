@@ -15,7 +15,7 @@ import { createLogger } from "../logging.js";
 import { beginAntigravityLogin } from "../core/antigravity.js";
 import { beginLogin } from "../core/login.js";
 import { fetchCodexModels } from "../upstream/codex.js";
-import { fetchAntigravityModels } from "../upstream/antigravity.js";
+import { fetchAntigravityDiscovery } from "../upstream/antigravity.js";
 import { DuplicateAccountError, type CredentialStore } from "../pool/store.js";
 
 const log = createLogger({ mod: "oauth-session" });
@@ -92,11 +92,16 @@ export class LoginSessions {
           tierId: result.tierId,
         });
 
-        // Discover the real model list now rather than leaving the account on
-        // static defaults it may not be entitled to.
+        /*
+         * Discover the real catalogue now rather than leaving the account on
+         * static defaults it may not be entitled to — and keep the per-model
+         * facts, not just the ids. Image support is published here and
+         * nowhere else, so discarding it is what left the capability gate
+         * refusing images for models that accept them.
+         */
         try {
-          const models = await fetchAntigravityModels(this.store.get(credential.id)!);
-          if (models.length) this.store.setCustomModels(credential.id, models);
+          const models = await fetchAntigravityDiscovery(this.store.get(credential.id)!);
+          if (models.length) this.store.setDiscoveredModels(credential.id, models);
         } catch {
           /* defaults stand */
         }

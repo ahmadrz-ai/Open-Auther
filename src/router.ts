@@ -16,6 +16,7 @@ import { createLogger, maskEmail } from "./logging.js";
 import { RefreshError, ensureFreshToken } from "./core/refresh.js";
 import { buildCatalogue } from "./core/catalogue.js";
 import { capabilitiesFor, meetsRequirements, requirementsForRequest, type CapabilityRequirements } from "./core/capabilities.js";
+import { lookupModel, mergeDiscovered, type DiscoveredModel } from "./core/model-metadata.js";
 import { isVirtualModel, orderCandidates, type Candidate, type VirtualModel } from "./core/virtual.js";
 import type { UpstreamFailure } from "./pool/errors.js";
 import { canServe, selectCredential } from "./pool/selector.js";
@@ -80,6 +81,49 @@ export class Router {
     private readonly cfg: Config,
     private readonly store: CredentialStore,
   ) {}
+
+  /**
+   * What the pool's providers have published about one model.
+   *
+   * Merged across every credential, because the question the gate is asking is
+   * "can anything here serve this", and the per-credential filter in
+   * `candidatePairs` answers "which one" afterwards.
+   */
+  private discovered(model: string): DiscoveredModel | null {
+    return mergeDiscovered(
+      this.store.all().map((c) => c.modelMetadata),
+      model,
+    );
+  }
+
+  /**
+   * Follow a retired model id to its replacement.
+   *
+   * Providers announce this themselves — Antigravity returns
+   * `deprecatedModelIds: {old: {newModelId}}` in the same response that lists
+   * the catalogue — and discovery now stores it. Without this a client pinned
+   * to an id the backend retired gets a hard failure for the rest of time,
+   * even though the backend named the model to use instead. The rename is
+   * logged, so a surprising answer is traceable to the redirect.
+   *
+   * Only one hop is followed. A replacement pointing at another replacement is
+   * a provider-side inconsistency, and chasing it risks a cycle.
+   */
+  private resolveAlias(model: string): string {
+    const record = this.discovered(model);
+    const target = record?.replacedBy;
+    if (!target || target === model) return model;
+
+    // The replacement has to be something the pool can actually serve, or the
+    // redirect trades one dead end for another.
+    const servable = this.store
+      .all()
+      .some((c) => (c.customModels ?? []).some((m) => m.toLowerCase() === target.toLowerCase()));
+    if (!servable) return model;
+
+    log.info("model_alias_followed", { from: model, to: target });
+    return target;
+  }
 
   /** Persist first-token latency so `fast` learns from normal chat traffic. */
   private async *recordModelEvents(
@@ -274,7 +318,17 @@ export class Router {
       for (const entry of buildCatalogue([credential], { freeOnly: this.cfg.freeModelsOnly })) {
         if (
           requirements &&
-          !meetsRequirements(capabilitiesFor(entry.id, this.cfg.modelCapabilities), requirements)
+          !meetsRequirements(
+            // This credential's own metadata, not the pool's merged view: the
+            // question here is whether *this* connection can serve the
+            // request, and another account's entitlements do not bear on it.
+            capabilitiesFor(
+              entry.id,
+              this.cfg.modelCapabilities,
+              lookupModel(credential.modelMetadata, entry.id),
+            ),
+            requirements,
+          )
         ) {
           continue;
         }
@@ -420,8 +474,21 @@ export class Router {
       return await this.chatVirtual(req.model, req, signal, opts);
     }
 
+    /*
+     * Follow a provider-announced rename before anything else looks at the id.
+     * A request for a retired model is a request for whatever replaced it, and
+     * every check below should be made against the model that will actually
+     * run.
+     */
+    const model = this.resolveAlias(req.model);
+    if (model !== req.model) req = { ...req, model };
+
     const requirements = requirementsForRequest(req);
-    const capabilities = capabilitiesFor(req.model, this.cfg.modelCapabilities);
+    const capabilities = capabilitiesFor(
+      req.model,
+      this.cfg.modelCapabilities,
+      this.discovered(req.model),
+    );
     if (!meetsRequirements(capabilities, requirements)) {
       const required = capabilityLabels(requirements).join(", ");
       return {
@@ -431,7 +498,8 @@ export class Router {
         message:
           `Model "${req.model}" cannot satisfy this request. ` +
           `Required capabilities: ${required || "none"}. ` +
-          `Choose a compatible model or configure a capability override.`,
+          `This is what ${capabilities.source === "override" ? "your capability override" : "the provider"} ` +
+          `reports for it — choose a compatible model, or set an override in Settings.`,
         retryAt: null,
         attempts: 0,
       };

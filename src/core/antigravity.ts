@@ -23,6 +23,8 @@
  * withdraw access. See the README.
  */
 
+import { antigravityVersion } from "./antigravity-version.js";
+
 /** Mask matches the upstream project the byte sequences were taken from. */
 const MASK = "omniroute-public-v1";
 
@@ -100,15 +102,20 @@ const ARCH = "arm64";
 /*
  * The backend refuses old builds — it answers HTTP 200 with "This version of
  * Antigravity is no longer supported" as the model's reply, so a stale version
- * here looks like a working connection returning nonsense. Overridable, since
- * this will go stale again the next time the IDE ships.
+ * looks like a working connection returning nonsense rather than an error.
+ *
+ * This was a constant, which meant it was guaranteed to break every user the
+ * next time the IDE shipped, and to break them silently. It is now resolved per
+ * call: an explicit setting, else the IDE installed on this machine, else a
+ * fallback that gets retired the moment the backend refuses it. See
+ * `antigravity-version.ts` for the chain.
  */
-const IDE_VERSION = process.env.AI_AUTHER_ANTIGRAVITY_VERSION || "2.0.1";
 const NODE_API_CLIENT = "google-api-nodejs-client/10.3.0";
 
-export const ideUserAgent = () => `antigravity/ide/${IDE_VERSION} ${OS_TYPE}/${ARCH}`;
+export const ideUserAgent = () =>
+  `antigravity/ide/${antigravityVersion()} ${OS_TYPE}/${ARCH}`;
 export const ideNodeUserAgent = () =>
-  `antigravity/${IDE_VERSION} ${OS_TYPE}/${ARCH} ${NODE_API_CLIENT}`;
+  `antigravity/${antigravityVersion()} ${OS_TYPE}/${ARCH} ${NODE_API_CLIENT}`;
 
 /** Headers for chat traffic. */
 export function contentHeaders(accessToken: string): Record<string, string> {

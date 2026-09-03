@@ -10,6 +10,11 @@
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { ANTIGRAVITY_DEFAULT_MODELS } from "../core/antigravity.js";
+import {
+  parseMetadata,
+  toMetadata,
+  type DiscoveredModel,
+} from "../core/model-metadata.js";
 import { inferProviderId, providerDef } from "../core/providers.js";
 import { extractWebCredential, WEB_COOKIE_BY_ID } from "../core/webcookie.js";
 import { type Database, now } from "../db.js";
@@ -43,6 +48,8 @@ interface Row {
   per_model_quota?: number | null;
   model_cooldowns?: string | null;
   model_stats?: string | null;
+  model_metadata?: string | null;
+  models_synced_at?: number | null;
   email: string | null;
   plan_type: string | null;
   label: string | null;
@@ -130,6 +137,8 @@ function toCredential(row: Row): Credential {
     perModelQuota: Boolean(row.per_model_quota),
     modelCooldowns: parseJsonMap(row.model_cooldowns),
     modelStats: parseModelStats(row.model_stats),
+    modelMetadata: parseMetadata(row.model_metadata),
+    modelsSyncedAt: row.models_synced_at ?? null,
     email: row.email,
     planType: row.plan_type,
     label: row.label,
@@ -192,6 +201,8 @@ export function toPublic(c: Credential, at: number = now()): CredentialPublic {
     perModelQuota: c.perModelQuota,
     modelCooldowns: c.modelCooldowns,
     modelStats: c.modelStats,
+    modelMetadata: c.modelMetadata,
+    modelsSyncedAt: c.modelsSyncedAt,
     name: displayName(c),
     emailMasked: maskEmail(c.email),
     planType: c.planType,
@@ -989,6 +1000,58 @@ export class CredentialStore extends EventEmitter {
       .prepare("UPDATE credentials SET custom_models = ?, updated_at = ? WHERE id = ?")
       .run(clean.length ? JSON.stringify(clean) : null, now(), id);
     this.record("models_discovered", id, { count: clean.length });
+    return true;
+  }
+
+  /**
+   * Record a full discovery result: the model ids *and* what the provider said
+   * about each one.
+   *
+   * Written in one statement with `setCustomModels`' effect folded in, because
+   * the two must never disagree — a routing list naming ids the metadata does
+   * not cover is how a model ends up gated on a stale capability guess.
+   *
+   * `models_synced_at` is stamped here and nowhere else, so it always means
+   * "the last time a provider actually answered", which is what the refresh
+   * TTL needs it to mean.
+   */
+  setDiscoveredModels(id: number, models: readonly DiscoveredModel[]): boolean {
+    if (!this.get(id)) return false;
+
+    const seen = new Set<string>();
+    const chat: DiscoveredModel[] = [];
+    for (const model of models) {
+      const trimmed = model.id.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      chat.push({ ...model, id: trimmed });
+    }
+
+    // Only chat-capable ids go in the routing list; the rest are kept in the
+    // metadata so the dashboard can still explain why they are not offered.
+    const ids = chat.filter((m) => m.chat).map((m) => m.id);
+    const ts = now();
+
+    this.db
+      .prepare(
+        `UPDATE credentials
+            SET custom_models = ?, model_metadata = ?, models_synced_at = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .run(
+        ids.length ? JSON.stringify(ids) : null,
+        chat.length ? JSON.stringify(toMetadata(chat)) : null,
+        ts,
+        ts,
+        id,
+      );
+
+    this.record("models_discovered", id, {
+      count: ids.length,
+      withMetadata: chat.length,
+      vision: chat.filter((m) => m.vision === true).length,
+      retired: chat.filter((m) => m.replacedBy).length,
+    });
     return true;
   }
 

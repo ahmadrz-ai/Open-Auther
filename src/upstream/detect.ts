@@ -11,9 +11,11 @@
  * candidates and keep the first that behaves like an OpenAI-compatible API.
  */
 
+import type { DiscoveredModel } from "../core/model-metadata.js";
 import { createLogger } from "../logging.js";
 import type { CustomProtocol } from "../pool/types.js";
 import { ANTHROPIC_VERSION } from "./anthropic.js";
+import { parseModelList } from "./discovery.js";
 
 const log = createLogger({ mod: "detect" });
 
@@ -23,6 +25,14 @@ export interface DetectionResult {
   baseUrl: string | null;
   /** Models the endpoint reported, when it has a listing route. */
   models: string[];
+  /**
+   * The same models with whatever the endpoint published about each.
+   *
+   * Empty when detection succeeded through a live completion rather than a
+   * listing, because a completion proves the endpoint works and says nothing
+   * about what any model can do.
+   */
+  discovered: DiscoveredModel[];
   /** How we established it: model listing, or a live completion. */
   via: "models" | "chat" | "messages" | null;
   /**
@@ -102,25 +112,47 @@ async function tryModels(
   base: string,
   apiKey: string,
   signal: AbortSignal,
-): Promise<{ ok: boolean; models: string[]; status: number | string; note: string }> {
+): Promise<{
+  ok: boolean;
+  models: string[];
+  discovered: DiscoveredModel[];
+  status: number | string;
+  note: string;
+}> {
+  const fail = (status: number | string, note: string) => ({
+    ok: false,
+    models: [],
+    discovered: [],
+    status,
+    note,
+  });
+
   try {
     const res = await fetch(`${base}/models`, { headers: authHeaders(apiKey), signal });
-    if (!res.ok) return { ok: false, models: [], status: res.status, note: res.statusText };
+    if (!res.ok) return fail(res.status, res.statusText);
 
     // A dashboard route happily returns 200 with an HTML page — that is not an
     // API, and accepting it is exactly how the broken URL got saved.
-    if (!isJson(res)) return { ok: false, models: [], status: res.status, note: "returned HTML, not JSON" };
+    if (!isJson(res)) return fail(res.status, "returned HTML, not JSON");
 
     const body = (await res.json()) as { data?: Array<{ id?: string }> };
     if (!Array.isArray(body.data)) {
-      return { ok: false, models: [], status: res.status, note: "JSON without a data[] array" };
+      return fail(res.status, "JSON without a data[] array");
     }
-    const models = body.data
-      .map((m) => String(m.id ?? "").replace(/^models\//, ""))
-      .filter(Boolean);
-    return { ok: true, models, status: res.status, note: `${models.length} models` };
+
+    // Parsed rather than mapped to ids: OpenRouter and friends publish input
+    // modalities and context windows in these same entries, and reading only
+    // `id` is what left the capability gate with nothing to go on.
+    const discovered = parseModelList(body);
+    return {
+      ok: true,
+      models: discovered.map((m) => m.id),
+      discovered,
+      status: res.status,
+      note: `${discovered.length} models`,
+    };
   } catch (err) {
-    return { ok: false, models: [], status: "ERR", note: (err as Error).message };
+    return fail("ERR", (err as Error).message);
   }
 }
 
@@ -241,6 +273,7 @@ export async function detectEndpoint(
       ok: false,
       baseUrl: null,
       models: [],
+      discovered: [],
       via: null,
       protocol: null,
       attempts,
@@ -262,6 +295,7 @@ export async function detectEndpoint(
           ok: true,
           baseUrl: base,
           models: r.models,
+          discovered: r.discovered,
           via: "models",
           // A /models listing is an OpenAI convention; Anthropic has none.
           protocol: "openai_chat",
@@ -282,6 +316,7 @@ export async function detectEndpoint(
           ok: true,
           baseUrl: base,
           models: [],
+          discovered: [],
           via: "chat",
           protocol: "openai_chat",
           attempts,
@@ -307,6 +342,7 @@ export async function detectEndpoint(
           ok: true,
           baseUrl: base,
           models: [],
+          discovered: [],
           via: "messages",
           protocol: "anthropic_messages",
           attempts,
@@ -320,6 +356,7 @@ export async function detectEndpoint(
       ok: false,
       baseUrl: null,
       models: [],
+      discovered: [],
       via: null,
       protocol: null,
       attempts,

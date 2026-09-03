@@ -20,6 +20,7 @@ import {
   isReasoningLevel,
   REASONING_LEVELS,
 } from "../core/capabilities.js";
+import { mergeDiscovered } from "../core/model-metadata.js";
 import { providerDef } from "../core/providers.js";
 import { virtualChatModels } from "./chatui-meta.js";
 import { canServe } from "../pool/selector.js";
@@ -98,7 +99,11 @@ export function chatUiRoutes(
         const servers = creds.filter((cred) => offers(cred, id));
         return {
           id,
-          capabilities: capabilitiesFor(id, cfg.modelCapabilities),
+          capabilities: capabilitiesFor(
+            id,
+            cfg.modelCapabilities,
+            mergeDiscovered(servers.map((s) => s.modelMetadata), id),
+          ),
           // Providers holding at least one credential that offers this model.
           providers: [...new Set(servers.map((s) => s.providerId))],
           available: servers.some((s) => s.state === "active"),
@@ -280,7 +285,11 @@ export function chatUiRoutes(
             model,
             messages: history,
             stream: true,
-            reasoning_effort: capabilitiesFor(model, cfg.modelCapabilities).reasoning
+            reasoning_effort: capabilitiesFor(
+              model,
+              cfg.modelCapabilities,
+              mergeDiscovered(store.all().map((cred) => cred.modelMetadata), model),
+            ).reasoning
               ? (conversation.reasoningEffort as never)
               : undefined,
           },
@@ -368,15 +377,28 @@ export function chatUiRoutes(
 
   // ----------------------------------------------------- capabilities
 
-  app.get("/capabilities", (c) =>
-    c.json({
+  app.get("/capabilities", (c) => {
+    const metadata = store.all().map((cred) => cred.modelMetadata);
+
+    /*
+     * Report on every model the pool can actually serve, not just the ids in
+     * config. `cfg.models` is the static bootstrap list, so a connection whose
+     * catalogue was discovered — which is most of them — had none of its
+     * models represented here at all.
+     */
+    const ids = new Set(cfg.models);
+    for (const cred of store.all()) for (const m of cred.customModels ?? []) ids.add(m);
+
+    return c.json({
       builtin: BUILTIN_CAPABILITIES,
       overrides: cfg.modelCapabilities,
       resolved: Object.fromEntries(
-        cfg.models.map((m) => [m, capabilitiesFor(m, cfg.modelCapabilities)]),
+        [...ids]
+          .sort()
+          .map((m) => [m, capabilitiesFor(m, cfg.modelCapabilities, mergeDiscovered(metadata, m))]),
       ),
-    }),
-  );
+    });
+  });
 
   return app;
 }
