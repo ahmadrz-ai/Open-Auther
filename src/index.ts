@@ -45,4 +45,35 @@ export {
   REASONING_LEVELS,
   UNKNOWN_MODEL,
 } from "./core/capabilities.js";
-export type { CapabilityRequirements, CapabilityRequest, ModelCapabilities, ReasoningLevel } from "./core/capabilities.js";
+export type {
+  CapabilityRequirements,
+  CapabilityRequest,
+  CapabilitySource,
+  ModelCapabilities,
+  ReasoningLevel,
+  ResolvedCapabilities,
+} from "./core/capabilities.js";
+
+export {
+  discoveredModel,
+  inferCapabilities,
+  lookupModel,
+  mergeDiscovered,
+  parseMetadata,
+  toMetadata,
+} from "./core/model-metadata.js";
+export type { DiscoveredModel, ModelMetadata } from "./core/model-metadata.js";
+
+export { discoverModels, startModelSync, syncCredential, syncPool } from "./core/model-sync.js";
+export type { ModelSyncHandle, SweepOptions, SyncResult } from "./core/model-sync.js";
+
+export { parseModelEntry, parseModelList, fetchOpenAiDiscovery } from "./upstream/discovery.js";
+
+export {
+  FALLBACK_VERSION as ANTIGRAVITY_FALLBACK_VERSION,
+  antigravityVersion,
+  describeVersionSource,
+  detectInstalledVersion,
+  resolveAntigravityVersion,
+} from "./core/antigravity-version.js";
+export type { ResolvedVersion, VersionSource } from "./core/antigravity-version.js";

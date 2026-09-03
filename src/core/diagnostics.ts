@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { Config } from "../config.js";
+import { describeVersionSource, resolveAntigravityVersion } from "./antigravity-version.js";
 import { providerDef, type ProviderDef } from "./providers.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { effectiveState, isAvailable } from "../pool/store.js";
@@ -152,6 +153,28 @@ export function buildDoctorReport(
             : "No provider credentials configured yet.",
     },
   ];
+
+  /*
+   * Only worth reporting when an Antigravity connection exists. The client
+   * version is the one setting here that fails silently — the backend answers
+   * 200 and puts "no longer supported" where the model's reply should be — so
+   * saying out loud whether it is known or guessed is the difference between a
+   * one-line fix and an afternoon of debugging a model that talks nonsense.
+   */
+  if (credentials.some((credential) => credential.providerType === "antigravity")) {
+    const version = resolveAntigravityVersion();
+    checks.push({
+      id: "antigravity-version",
+      level: version.guessed ? "warn" : "pass",
+      label: "Antigravity client version",
+      message: `${version.version} — ${describeVersionSource(version)}.${
+        version.guessed
+          ? " If replies come back as an upgrade notice, install the IDE or set" +
+            " AI_AUTHER_ANTIGRAVITY_VERSION."
+          : ""
+      }`,
+    });
+  }
 
   if (storage) {
     checks.splice(2, 0, {

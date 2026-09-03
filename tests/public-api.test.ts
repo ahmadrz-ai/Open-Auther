@@ -11,4 +11,11 @@ describe("public library entrypoint", () => {
     expect(OpenAuther.AuthAdapterRegistry).toBeTypeOf("function");
     expect(OpenAuther.BUILTIN_AUTH_ADAPTERS.get("codex")?.id).toBe("codex");
   });
+
+  it("exports the model discovery surface", () => {
+    expect(OpenAuther.syncPool).toBeTypeOf("function");
+    expect(OpenAuther.startModelSync).toBeTypeOf("function");
+    expect(OpenAuther.parseModelList([{ id: "a" }])[0]?.id).toBe("a");
+    expect(OpenAuther.inferCapabilities("gemini-3.7-flash")?.vision).toBe(true);
+  });
 });

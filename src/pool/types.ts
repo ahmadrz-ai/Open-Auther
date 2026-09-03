@@ -1,3 +1,5 @@
+import type { ModelMetadata } from "../core/model-metadata.js";
+
 /** Outcome of the last per-model probe. */
 export interface ModelStat {
   ok: boolean;
@@ -57,6 +59,13 @@ export interface Credential {
   modelCooldowns: Record<string, number>;
   /** model -> last test result, used by Advanced settings and `fast`. */
   modelStats: Record<string, ModelStat>;
+  /**
+   * model -> what this provider published about it: image support, context
+   * window, whether the id has been superseded. Empty until discovery runs.
+   */
+  modelMetadata: ModelMetadata;
+  /** Epoch seconds of the last successful model discovery, or null for never. */
+  modelsSyncedAt: number | null;
 
   email: string | null;
   planType: string | null;
@@ -110,6 +119,8 @@ export interface CredentialPublic {
   perModelQuota: boolean;
   modelCooldowns: Record<string, number>;
   modelStats: Record<string, ModelStat>;
+  modelMetadata: ModelMetadata;
+  modelsSyncedAt: number | null;
   /**
    * Display name. This is what the graph and every list shows — never the
    * email, which is both sensitive and unhelpful when several accounts share

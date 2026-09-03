@@ -7,11 +7,21 @@ import { now } from "../src/db.js";
 import { Router } from "../src/router.js";
 import { ensureFreshToken } from "../src/core/refresh.js";
 import type { CodexEvent } from "../src/upstream/translate.js";
+import { discoveredModel } from "../src/core/model-metadata.js";
 import { credentialInput, makeStore, testConfig } from "./fixtures.js";
 
 const REQUEST = {
   model: "gpt-4o",
   messages: [{ role: "user" as const, content: "hello" }],
+};
+
+/** A multimodal turn, which is what trips the vision requirement. */
+const IMAGE_MESSAGE = {
+  role: "user" as const,
+  content: [
+    { type: "text", text: "describe" },
+    { type: "image_url", image_url: { url: "data:image/png;base64,test" } },
+  ],
 };
 
 /** Build an SSE Response carrying the given upstream frames. */
@@ -210,6 +220,89 @@ describe("router failover", () => {
     expect(outcome.code).toBe("model_capability_mismatch");
     expect(outcome.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends an image to a model the provider says takes images", async () => {
+    const store = makeStore();
+    const credential = store.add(credentialInput());
+    store.setDiscoveredModels(credential.id, [
+      discoveredModel("gemini-3.7-flash", { vision: true, contextWindow: 1_000_000 }),
+    ]);
+
+    const fetchMock = vi.fn(async () => sseResponse(OK_FRAMES));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      { model: "gemini-3.7-flash", messages: [IMAGE_MESSAGE] },
+      new AbortController().signal,
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("lets an image through for a model nothing has described", async () => {
+    /*
+     * The reported bug. An id in no built-in table and with no published
+     * manifest used to resolve to `unknown`, whose vision flag is false, and
+     * the gate refused before the request left the machine. Nothing here knows
+     * whether this model takes images — so the upstream gets to decide.
+     */
+    const store = makeStore();
+    store.add(credentialInput({ customModels: ["house-model-v2"] }));
+
+    const fetchMock = vi.fn(async () => sseResponse(OK_FRAMES));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      { model: "house-model-v2", messages: [IMAGE_MESSAGE] },
+      new AbortController().signal,
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("follows a retired model id to the replacement the provider named", async () => {
+    const store = makeStore();
+    const credential = store.add(credentialInput());
+    store.setDiscoveredModels(credential.id, [
+      discoveredModel("gemini-3.7-flash", { vision: true }),
+      discoveredModel("gemini-3.5-flash", { replacedBy: "gemini-3.7-flash", chat: false }),
+    ]);
+
+    const fetchMock = vi.fn(async () => sseResponse(OK_FRAMES));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      { model: "gemini-3.5-flash", messages: [{ role: "user", content: "hello" }] },
+      new AbortController().signal,
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.model).toBe("gemini-3.7-flash");
+  });
+
+  it("does not redirect to a replacement the pool cannot serve", async () => {
+    const store = makeStore();
+    const credential = store.add(credentialInput({ customModels: ["only-this"] }));
+    store.setDiscoveredModels(credential.id, [
+      discoveredModel("only-this"),
+      discoveredModel("retired", { replacedBy: "not-in-the-pool", chat: false }),
+    ]);
+
+    const fetchMock = vi.fn(async () => sseResponse(OK_FRAMES));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await new Router(testConfig(), store).chat(
+      { model: "retired", messages: [{ role: "user", content: "hello" }] },
+      new AbortController().signal,
+    );
+
+    // Trading one dead end for another helps nobody; the original id stands
+    // and fails on its own terms.
+    expect(outcome.ok).toBe(false);
   });
 
   it("filters incapable candidates before ranking a virtual model", async () => {

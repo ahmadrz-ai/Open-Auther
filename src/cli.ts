@@ -20,11 +20,12 @@ import { openBrowser } from "./core/login.js";
 import { BUILTIN_AUTH_ADAPTERS } from "./core/auth-adapters.js";
 import { importCredentials } from "./core/import.js";
 import { ensureFreshToken } from "./core/refresh.js";
+import { startModelSync, syncPool } from "./core/model-sync.js";
 import { buildDoctorReport, buildProviderStatus } from "./core/diagnostics.js";
 import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
-import { fetchAntigravityModels } from "./upstream/antigravity.js";
-import { fetchCodexModels } from "./upstream/codex.js";
+import { fetchAntigravityDiscovery } from "./upstream/antigravity.js";
+import { fetchCodexDiscovery } from "./upstream/codex.js";
 import { inspectStorage } from "./storage.js";
 import { checkForUpdate, installLatestPackage } from "./core/update.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
@@ -64,6 +65,15 @@ function bootstrap(): { cfg: Config; store: CredentialStore; db: Database } {
 async function cmdServe(): Promise<void> {
   const { cfg, store, db } = bootstrap();
   const app = createApp(cfg, store, db);
+
+  /*
+   * Keep the catalogue current while the gateway runs. Provider model lists
+   * change without notice, and until this existed a connection routed whatever
+   * it discovered on the day it was created — which is how a request ends up
+   * answered with "that model is no longer available" by an upstream that has
+   * been saying so for weeks.
+   */
+  const modelSync = startModelSync(store, cfg);
 
   const server = serve({ fetch: app.fetch, hostname: cfg.host, port: cfg.port }, (info) => {
     const base = `http://${cfg.host}:${info.port}`;
@@ -115,6 +125,7 @@ async function cmdServe(): Promise<void> {
 
   const shutdown = (signal: string) => {
     out(`\n${C.dim}${signal} received, shutting down.${C.reset}`);
+    modelSync.stop();
     server.close(() => process.exit(0));
     // Do not wait forever on open SSE streams.
     setTimeout(() => process.exit(0), 3000).unref();
@@ -333,9 +344,10 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
         continue;
       }
       try {
-        const models = await fetchCodexModels(credential.accessToken);
-        if (models.length) {
-          store.setCustomModels(credential.id, models);
+        const discovered = await fetchCodexDiscovery(credential.accessToken);
+        const models = discovered.map((m) => m.id);
+        if (discovered.length) {
+          store.setDiscoveredModels(credential.id, discovered);
           // Hermes does not permanently kill a valid OAuth credential because
           // an earlier request was classified as a plan/model gate. A live,
           // account-authenticated Codex catalogue is evidence that the token is
@@ -393,9 +405,10 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
          * could ever refresh the catalogue.
          */
         const fresh = await ensureFreshToken(store, cfg, credential.id).catch(() => credential);
-        const models = await fetchAntigravityModels(fresh);
-        if (models.length) {
-          store.setCustomModels(credential.id, models);
+        const discovered = await fetchAntigravityDiscovery(fresh);
+        const models = discovered.filter((m) => m.chat).map((m) => m.id);
+        if (discovered.length) {
+          store.setDiscoveredModels(credential.id, discovered);
           /*
            * Re-discovery invalidates recorded failures. They were measured
            * against the previous list — and, for Antigravity, often against an
@@ -453,7 +466,14 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
 
     if (detection.ok && detection.baseUrl) {
       store.setBaseUrl(credential.id, detection.baseUrl);
-      if (detection.models.length) store.setCustomModels(credential.id, detection.models);
+      // Prefer the parsed records: same models, but carrying whatever the
+      // endpoint published about each. Fall back to bare ids for an endpoint
+      // detected through a live completion, which lists nothing.
+      if (detection.discovered.length) {
+        store.setDiscoveredModels(credential.id, detection.discovered);
+      } else if (detection.models.length) {
+        store.setCustomModels(credential.id, detection.models);
+      }
       if (detection.protocol) store.setProtocol(credential.id, detection.protocol);
     }
 
@@ -490,9 +510,61 @@ async function cmdProvidersDiscover(args: string[]): Promise<void> {
   out();
 }
 
+/**
+ * Re-read every provider's catalogue on demand.
+ *
+ * The same code path the background sweep runs, so what you see here is what
+ * the gateway does on its own — running this is only ever a way to not wait
+ * for the next sweep.
+ */
+async function cmdProvidersSync(args: string[]): Promise<void> {
+  const { cfg, store } = bootstrap();
+  const json = args.includes("--json");
+  const idArg = args.find((arg) => /^\d+$/.test(arg));
+
+  const results = await syncPool(store, cfg, {
+    force: true,
+    ...(idArg ? { credentialId: Number.parseInt(idArg, 10) } : {}),
+  });
+
+  if (json) {
+    out(JSON.stringify({ version: VERSION, synced: results.length, results }, null, 2));
+    return;
+  }
+
+  out();
+  out(`  ${C.bold}Model sync${C.reset}`);
+  if (results.length === 0) {
+    out(`  ${C.dim}No credentials found. Add a provider first.${C.reset}`);
+  }
+  for (const result of results) {
+    const status = result.skipped
+      ? `${C.dim}SKIP${C.reset}`
+      : result.ok
+        ? `${C.green}OK${C.reset}`
+        : `${C.red}FAIL${C.reset}`;
+    out(
+      `  #${String(result.credentialId).padEnd(4)} ${result.providerId.padEnd(16)} ` +
+        `${status} ${result.message}`,
+    );
+    for (const id of result.added) out(`       ${C.green}+ ${id}${C.reset}`);
+    for (const id of result.removed) out(`       ${C.dim}- ${id}${C.reset}`);
+    for (const [from, to] of Object.entries(result.replaced)) {
+      out(`       ${C.yellow}${from} -> ${to}${C.reset} ${C.dim}(retired upstream)${C.reset}`);
+    }
+  }
+  out();
+  out(
+    `  ${C.dim}The gateway repeats this automatically every ${cfg.modelSyncHours}h ` +
+      `while it runs (AI_AUTHER_MODEL_SYNC_HOURS).${C.reset}`,
+  );
+  out();
+}
+
 async function cmdProviders(args: string[]): Promise<void> {
   const sub = args[0] ?? "list";
   if (sub === "discover") return cmdProvidersDiscover(args.slice(1));
+  if (sub === "sync") return cmdProvidersSync(args.slice(1));
   if (sub === "status") {
     const { store } = bootstrap();
     const statuses = buildProviderStatus(BUILTIN_PROVIDER_REGISTRY, store.all());
@@ -849,6 +921,8 @@ function usage(): void {
     open-auther providers status --json Machine-readable provider status
     open-auther providers discover     Probe and persist provider endpoint/model metadata
     open-auther providers discover --json Machine-readable discovery results
+    open-auther providers sync [id]    Re-read live model catalogues now
+    open-auther providers sync --json  Machine-readable sync results
     open-auther update                  Check npm for a newer release
     open-auther uninstall [--yes] [--purge-cache]
                                         Remove package and all local data

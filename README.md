@@ -65,6 +65,8 @@ open-auther providers status --json Machine-readable provider status
 open-auther providers discover      Probe and persist endpoint/model metadata
 open-auther providers discover --json
                                     Machine-readable discovery results
+open-auther providers sync [id]     Re-read live model catalogues now
+open-auther providers sync --json   Machine-readable sync results
 open-auther doctor                  Diagnose local gateway readiness
 open-auther doctor --json           Machine-readable diagnostics
 open-auther key show|new            Show or create gateway API keys
@@ -93,7 +95,87 @@ open-auther uninstall --yes --purge-cache
 Stop a running gateway first. On Windows an active process holds the database
 open, and the command will report which path it could not delete.
 
-The router rejects known capability mismatches before sending an upstream request. Vision, tool, and reasoning requirements are inferred from the request; virtual models such as `fast` and `quality` only rank candidates that can satisfy those requirements. Unknown models remain usable for ordinary text requests and can be made explicit through capability overrides.
+## Model discovery and capabilities
+
+The model catalogue is read from the providers themselves, not from a list in
+this repository. Every connection is asked what it currently serves when it is
+added, and again on a schedule while the gateway runs:
+
+```bash
+open-auther providers sync
+```
+
+`providers sync` re-reads every catalogue immediately; the gateway repeats it
+every `AI_AUTHER_MODEL_SYNC_HOURS` hours (default 6, `0` disables). The static
+model lists in the source are only the bootstrap for a connection that has not
+synced yet. A failed or empty sync changes nothing — the previous list keeps
+serving, so a network blip cannot empty a working pool.
+
+Discovery keeps what each provider says about a model, not just its name:
+
+```text
+Antigravity   supportsImages, supportsThinking, maxTokens, quota,
+              and deprecatedModelIds (a retired id -> its replacement)
+Codex         the account's visible slugs, in the client's own priority order
+OpenRouter    architecture.input_modalities, supported_parameters, context_length
+Others        whatever GET /models publishes; anything absent stays unknown
+```
+
+Two things follow from that.
+
+**Retired ids are followed, not failed.** When a provider says an id has been
+superseded and the replacement is one the pool can serve, requests for the old
+id are routed to the new one and the redirect is logged. Previously a client
+pinned to a retired model got a hard failure indefinitely, even though the
+backend had named its replacement in the same response.
+
+**The capability gate only refuses on evidence.** Vision, tool, and reasoning
+requirements are inferred from the request, and a model is rejected before the
+upstream call only when something that actually knows says it cannot comply: a
+capability override you set, the provider's own manifest, or the verified
+built-in table. A model nothing has described is sent upstream and the upstream
+decides. This is the fix for image requests being refused locally for models
+that accept images perfectly well — every id outside the built-in table used to
+resolve to "unknown", whose vision flag is false, and the gate treated that
+absence of information as a "no".
+
+Capabilities resolve highest-precedence-first: your override, then the
+provider's manifest, then the built-in table, then a guess from the model
+family, then the conservative default. The layers merge, so a provider that
+publishes only image support still picks up a context window from the table.
+Overrides are editable in Settings and always win.
+
+Virtual models such as `fast` and `quality` rank only candidates that can
+satisfy the request's requirements, scored against the discovered facts rather
+than the model name alone.
+
+### Antigravity client version
+
+The Cloud Code backend refuses client builds it considers stale, and it does so
+in the worst possible way: HTTP 200, with "This version of Antigravity is no
+longer supported" where the model's reply should be. A connection that has gone
+stale therefore looks perfectly healthy while answering every prompt with an
+upgrade notice.
+
+The version is resolved at runtime rather than compiled in, most trustworthy
+source first:
+
+```text
+1  AI_AUTHER_ANTIGRAVITY_VERSION   an explicit setting always wins
+2  the Antigravity IDE installed on this machine, read from its product.json
+3  a version already resolved this session
+4  a built-in fallback, used only when nothing above is available
+```
+
+If you have the IDE installed, its version is by definition the one the backend
+accepts, and updating the IDE is picked up without restarting the gateway. Point
+at an unusual install with `AI_AUTHER_ANTIGRAVITY_APP`.
+
+When the backend does refuse a version, that version is retired rather than
+re-sent, and the request fails with `antigravity_client_outdated` naming the
+version and where it came from. `open-auther doctor` reports the version in use
+and warns when it is the fallback guess rather than something read off the
+machine.
 
 ## Custom endpoint protocols
 
@@ -129,6 +211,14 @@ AI_AUTHER_HOST        Bind address (default: 127.0.0.1)
 AI_AUTHER_API_KEY     Override the gateway API key
 AI_AUTHER_ROTATION    fill_first | round_robin | least_used | random
 AI_AUTHER_LOG_LEVEL   debug | info | warn | error
+AI_AUTHER_MODEL_SYNC_HOURS
+                      How often to re-read provider model catalogues
+                      (default: 6; 0 disables the automatic sweep)
+AI_AUTHER_ANTIGRAVITY_VERSION
+                      Override the Antigravity client version presented
+AI_AUTHER_ANTIGRAVITY_APP
+                      Path to an Antigravity install, when it is not in
+                      one of the standard locations
 ```
 
 The default API endpoint is:

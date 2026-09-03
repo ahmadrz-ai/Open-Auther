@@ -1,0 +1,81 @@
+# Publish to npm without a token, a secret, or a one-time password.
+#
+# npm trusted publishing: the registry is told, once, that it should trust
+# releases coming from this repository and this workflow. GitHub then mints a
+# short-lived OIDC token for each run and npm verifies it. Nothing long-lived is
+# stored anywhere, so there is no publish token to leak and no authenticator
+# code to type.
+#
+# Two things must be true before this works, both done in the browser:
+#
+#   1. On npmjs.com -> the open-auther package -> Settings -> Trusted publisher,
+#      add: repository ahmadrz-ai/Open-Auther, workflow "release.yml".
+#   2. The package's publishing access must allow the trusted publisher. If the
+#      account requires 2FA for writes, choose the option that exempts trusted
+#      publishing, or the run will still be asked for an OTP it cannot supply.
+#
+# Release flow after that: bump the version, push the tag, done.
+#
+#   npm version minor --no-git-tag-version
+#   git commit -am "chore: release 1.1.0"
+#   git tag v1.1.0 && git push origin main --tags
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Lets a release be re-run from the Actions tab if a tag push fails partway.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, e.g. v1.1.0"
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # The OIDC token npm exchanges for publish rights. Without this the run
+      # has no credential at all and the publish fails closed.
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Node 22 ships npm 10, which predates trusted publishing. The publish
+      # would fall back to asking for a token and fail with a confusing auth
+      # error rather than an explanatory one.
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+
+      - run: npm ci
+
+      # Refuse to publish a tag that disagrees with package.json. Getting these
+      # out of step is how a v1.1.0 tag ends up published as 1.0.9.
+      - name: Check the tag matches package.json
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $TAG does not match package.json ($PKG)." >&2
+            exit 1
+          fi
+          echo "Publishing $PKG"
+
+      - run: npm run build
+      - run: npm run test
+
+      # prepublishOnly re-runs build and test; --provenance records where this
+      # tarball was built, which the trusted-publisher setup makes verifiable.
+      - name: Publish
+        run: npm publish --provenance --access public

@@ -113,6 +113,17 @@ export interface Config {
 
   /** Per-model capability overrides layered over the built-in table. */
   modelCapabilities: Record<string, Partial<ModelCapabilities>>;
+
+  /**
+   * How often to re-ask every provider what it serves, in hours. 0 disables
+   * the sweep and leaves discovery manual.
+   *
+   * Provider catalogues change on their own schedule — models are retired,
+   * renamed, and added to an account without notice — and nothing here used to
+   * re-read them, so a connection kept routing whatever it discovered on the
+   * day it was created.
+   */
+  modelSyncHours: number;
 }
 
 /** Fields the Settings page is allowed to change at runtime. */
@@ -186,6 +197,13 @@ const DEFAULTS = {
   logLevel: "info" as LogLevel,
   ui: true,
   freeModelsOnly: true,
+  /*
+   * Six hours. Provider catalogues move on the order of days, so this is
+   * comfortably ahead of them while costing one cheap request per connection
+   * per sweep. The static model lists above are only ever the bootstrap for a
+   * connection that has not synced yet.
+   */
+  modelSyncHours: 6,
 };
 
 export function defaultHome(): string {
@@ -315,9 +333,14 @@ export function loadConfig(): Config {
 
     caveman: { ...DEFAULT_CAVEMAN, ...(file.caveman ?? {}) },
     modelCapabilities: file.modelCapabilities ?? {},
+    modelSyncHours: envInt(
+      "AI_AUTHER_MODEL_SYNC_HOURS",
+      file.modelSyncHours ?? DEFAULTS.modelSyncHours,
+    ),
   };
 
   if (cfg.maxAttempts < 1) throw new Error("maxAttempts must be at least 1");
+  if (cfg.modelSyncHours < 0) throw new Error("modelSyncHours must be 0 or more");
 
   // Register every gateway key so it can never appear in a log line.
   for (const k of cfg.gatewayKeys) registerSecret(k.key);
