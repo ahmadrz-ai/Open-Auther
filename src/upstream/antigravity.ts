@@ -20,6 +20,7 @@ import {
   resolveAntigravityVersion,
 } from "../core/antigravity-version.js";
 import { discoveredModel, type DiscoveredModel } from "../core/model-metadata.js";
+import { imagesOf, textOfParts, toGeminiPart } from "./media.js";
 import { createLogger } from "../logging.js";
 import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/errors.js";
 import type { Credential } from "../pool/types.js";
@@ -31,6 +32,10 @@ interface GeminiPart {
   text?: string;
   functionCall?: { name: string; args: unknown };
   functionResponse?: { name: string; response: unknown };
+  /** Base64 image payload carried inline with the turn. */
+  inlineData?: { mimeType: string; data: string };
+  /** Remote image the backend fetches for itself. */
+  fileData?: { mimeType: string; fileUri: string };
 }
 
 interface GeminiContent {
@@ -57,10 +62,25 @@ export function toGeminiRequest(body: CodexRequest): Record<string, unknown> {
 
   for (const item of body.input) {
     if (item.type === "message") {
-      const parts = (item.content as Array<Record<string, unknown>> | undefined) ?? [];
-      const text = parts.map((p) => String(p.text ?? "")).join("");
-      if (!text) continue;
-      push(item.role === "assistant" ? "model" : "user", { text });
+      const role = item.role === "assistant" ? "model" : "user";
+      const text = textOfParts(item.content);
+      const images = imagesOf(item.content);
+
+      /*
+       * Images first, then the text that refers to them — the order Gemini's
+       * own examples use, and it matters: a prompt reading "what is in this
+       * screenshot" makes no sense to the model before the screenshot.
+       *
+       * Previously this line read `parts.map(p => p.text).join("")` and then
+       * skipped the turn when the result was empty, so an image-only message
+       * was dropped and a text+image message lost the image. Vision could not
+       * work through this gateway no matter what the capability gate did.
+       */
+      for (const image of images) push(role, toGeminiPart(image) as GeminiPart);
+      if (text) push(role, { text });
+      // Still skip a turn that carried neither, or the backend 400s on an
+      // empty parts array.
+      continue;
     } else if (item.type === "function_call") {
       let args: unknown = {};
       try {
@@ -236,6 +256,40 @@ export async function callAntigravity(
 /** The backend's "upgrade your IDE" notice, delivered as if it were an answer. */
 const CLIENT_TOO_OLD = /version of Antigravity is no longer supported/i;
 
+/**
+ * The backend's "that model is retired" notice, also delivered as an answer.
+ *
+ *   "Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7
+ *    Flash in the latest version of Antigravity."
+ *
+ * This is a different failure from a deprecated id in the catalogue. The id is
+ * still listed and still routable — the refusal only happens at generation
+ * time, so nothing in `fetchAvailableModels` predicts it. It arrives as HTTP
+ * 200 with this sentence as the model's reply, which means without this check
+ * the gateway forwards it to the client as a successful completion. That is
+ * exactly what the user saw: a model answering every prompt with the same
+ * sentence, and a connection that looked perfectly healthy.
+ *
+ * Note both names are *display* names, not ids. Resolving them is the router's
+ * job, since only it can see the catalogue.
+ */
+const MODEL_RETIRED = /^\s*(.+?)\s+is no longer available\.\s*(?:please\s+)?switch to\s+(.+?)(?:\s+in the latest version.*)?[.\s]*$/i;
+
+export interface RetiredModelNotice {
+  retired: string;
+  replacement: string;
+}
+
+/** Read the retirement notice out of a model reply, if that is what it is. */
+export function parseRetiredNotice(text: string): RetiredModelNotice | null {
+  const match = MODEL_RETIRED.exec(text.trim());
+  if (!match) return null;
+  const retired = (match[1] ?? "").trim();
+  const replacement = (match[2] ?? "").trim();
+  if (!retired || !replacement) return null;
+  return { retired, replacement };
+}
+
 export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] {
   const payload = (raw.response as Record<string, unknown> | undefined) ?? raw;
   const out: CodexEvent[] = [];
@@ -278,6 +332,35 @@ export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] 
             },
           },
         ];
+      }
+
+      /*
+       * A retired model, announced the same way: as an answer rather than an
+       * error. Forwarding it would hand the client a "reply" that is really a
+       * refusal, so it becomes a failure the router can act on — and it names
+       * the replacement, which is what lets the request be retried rather than
+       * simply failed.
+       */
+      if (typeof part.text === "string") {
+        const notice = parseRetiredNotice(part.text);
+        if (notice) {
+          return [
+            {
+              kind: "error",
+              // 404 rather than 400: the model is gone, and `blamesModel`
+              // treats this as the model's fault, never the credential's.
+              status: 404,
+              body: {
+                code: "model_retired",
+                message:
+                  `The provider has retired "${notice.retired}" and names ` +
+                  `"${notice.replacement}" as its replacement.`,
+                retired: notice.retired,
+                replacement: notice.replacement,
+              },
+            },
+          ];
+        }
       }
 
       // `thought: true` marks a reasoning part, which is not assistant text.

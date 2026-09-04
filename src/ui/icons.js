@@ -25,6 +25,10 @@ const P = {
   add: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>',
   close: '<path d="M6 6 18 18M18 6 6 18"/>',
+  // Attach: a plain plus, matching the composer's other controls rather than
+  // a paperclip, which reads as "file" when images are what this accepts.
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="10" r="1.6"/><path d="m4.5 17 4.2-4.2 3 2.6 3.3-3.4 4.5 4.5"/>',
   warning: '<path d="M12 4.5 21 19.5H3z"/><path d="M12 10v4M12 16.8v.2"/>',
   error: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5M12 15.8v.2"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',

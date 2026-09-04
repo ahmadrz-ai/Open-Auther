@@ -24,6 +24,7 @@ import { canServe } from "../pool/selector.js";
 import { displayName, effectiveState, toPublic, type CredentialStore } from "../pool/store.js";
 import type { Router } from "../router.js";
 import { detectEndpoint, type DetectionResult } from "../upstream/detect.js";
+import { parseModelList } from "../upstream/discovery.js";
 import { checkGeminiSession } from "../upstream/geminiweb.js";
 import { checkKimiSession } from "../upstream/kimiweb.js";
 import { errorResponse } from "./errors.js";
@@ -247,6 +248,19 @@ export function providerRoutes(
 
     try {
       const cred = store.addCustomProvider(String(body.name ?? ""), baseUrl, apiKey, models);
+
+      /*
+       * Keep what detection learned about each model, not just its name.
+       * Storing ids alone left a freshly added provider with no metadata, so
+       * its capabilities resolved from the family heuristic — which is a guess
+       * even when the endpoint had just published the answer in `/models`.
+       * Skipped when the user named models by hand: those are their choice,
+       * and the detected records may not describe them.
+       */
+      if (detection?.discovered.length && !splitKeys(body.models).length) {
+        store.setDiscoveredModels(cred.id, detection.discovered);
+      }
+
       return c.json({
         ok: true,
         added: [{ id: cred.id, name: displayName(cred) }],
@@ -276,7 +290,13 @@ export function providerRoutes(
     if (!detection.ok) return c.json({ ok: false, detection }, 400);
 
     store.setBaseUrl(cred.id, detection.baseUrl!);
-    if (detection.models.length) store.setCustomModels(cred.id, detection.models);
+    // Prefer the parsed records, which carry the endpoint's own capability
+    // flags; bare ids are the fallback for a live-completion detection.
+    if (detection.discovered.length) {
+      store.setDiscoveredModels(cred.id, detection.discovered);
+    } else if (detection.models.length) {
+      store.setCustomModels(cred.id, detection.models);
+    }
     // Remember the protocol so every later request is framed correctly.
     if (detection.protocol) store.setProtocol(cred.id, detection.protocol);
 
@@ -621,18 +641,21 @@ export function providerRoutes(
         });
       }
 
-      const data = (await res.json()) as { data?: Array<{ id?: string }> };
-      const models = (data.data ?? [])
-        .map((m) => String(m.id ?? "").replace(/^models\//, ""))
-        .filter(Boolean)
-        .filter((m) => canServe(cred, m))
-        .sort();
+      /*
+       * Parse the entries rather than plucking `id` off each one. Providers
+       * publish input modalities, context windows and supported parameters in
+       * this same payload, and reading only the id is what left the capability
+       * gate guessing about models the endpoint had already described.
+       */
+      const data = await res.json();
+      const discovered = parseModelList(data).filter((m) => canServe(cred, m.id));
+      const models = discovered.map((m) => m.id);
 
       // Persist against every credential of this provider when asked, so the
       // discovered list drives both the picker and routing from now on.
-      if (c.req.query("save") === "1" && models.length) {
+      if (c.req.query("save") === "1" && discovered.length) {
         for (const x of store.all().filter((y) => y.providerId === id)) {
-          store.setCustomModels(x.id, models);
+          store.setDiscoveredModels(x.id, discovered);
         }
       }
       return c.json({ models, source: "live", saved: c.req.query("save") === "1" });

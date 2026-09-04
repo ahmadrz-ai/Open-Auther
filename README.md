@@ -129,6 +129,14 @@ id are routed to the new one and the redirect is logged. Previously a client
 pinned to a retired model got a hard failure indefinitely, even though the
 backend had named its replacement in the same response.
 
+This is handled in two places, because providers announce it in two ways. A
+deprecation listed in the catalogue is picked up by discovery. A refusal that
+only appears at generation time — Antigravity answers HTTP 200 with *"Gemini
+3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash"* where the
+reply should be — is detected in the response, recorded, and the request is
+retried once against the named replacement. Without that second case the
+notice was forwarded to the client as if it were the model's answer.
+
 **The capability gate only refuses on evidence.** Vision, tool, and reasoning
 requirements are inferred from the request, and a model is rejected before the
 upstream call only when something that actually knows says it cannot comply: a
@@ -148,6 +156,27 @@ Overrides are editable in Settings and always win.
 Virtual models such as `fast` and `quality` rank only candidates that can
 satisfy the request's requirements, scored against the discovered facts rather
 than the model name alone.
+
+### Image input
+
+Image parts are forwarded to whichever protocol the connection speaks, in that
+provider's own encoding:
+
+```text
+Gemini / Antigravity   inlineData for a payload, fileData for a URL
+OpenAI-compatible      an image_url content part
+Anthropic Messages     an image block with a base64 or url source
+Codex                  input_image, unchanged
+```
+
+Both `data:` URLs and remote `https:` URLs are accepted; nothing is fetched or
+re-encoded on the way through. A text-only turn is still sent as a plain
+string, because some OpenAI-compatible servers reject the typed-part array.
+
+The dashboard's Chat page can attach images directly — the `+` button, drag and
+drop onto the composer, or paste a screenshot from the clipboard. Up to 8
+images per message, 8 MB each. Attachments are stored with the conversation, so
+they are still there after a reload.
 
 ### Antigravity client version
 

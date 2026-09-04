@@ -9,7 +9,7 @@
 
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { ChatStore } from "../chat/store.js";
+import { ChatStore, type ChatAttachment } from "../chat/store.js";
 import type { Config } from "../config.js";
 import { now } from "../db.js";
 import { createLogger } from "../logging.js";
@@ -21,6 +21,7 @@ import {
   REASONING_LEVELS,
 } from "../core/capabilities.js";
 import { mergeDiscovered } from "../core/model-metadata.js";
+import { parseImagePart } from "../upstream/media.js";
 import { providerDef } from "../core/providers.js";
 import { virtualChatModels } from "./chatui-meta.js";
 import { canServe } from "../pool/selector.js";
@@ -33,6 +34,81 @@ const log = createLogger({ mod: "chatui" });
 
 /** Conversation history sent upstream. Bounded so an old chat cannot balloon. */
 const MAX_HISTORY_MESSAGES = 60;
+
+/**
+ * Attachment limits.
+ *
+ * Every payload here is stored inline in SQLite and replayed on each turn of
+ * the conversation, so an unbounded one costs disk on every send and tokens on
+ * every subsequent request. The per-message cap is what actually protects the
+ * upstream call; the per-file cap just gives a clearer error for one huge file.
+ */
+const MAX_ATTACHMENTS = 8;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/** Image types every provider in the catalogue accepts. */
+const ALLOWED_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
+
+/**
+ * Validate attachments arriving from the composer.
+ *
+ * This is the trust boundary: the dashboard is the only intended caller, but
+ * it is reachable by anything holding the gateway key, so the media type is
+ * taken from the payload itself rather than from whatever the client claimed,
+ * and anything that is not a plain base64 image is refused outright.
+ */
+function coerceAttachments(raw: unknown): ChatAttachment[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error("attachments must be an array");
+  if (raw.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments — ${MAX_ATTACHMENTS} at a time.`);
+  }
+
+  const out: ChatAttachment[] = [];
+  let total = 0;
+
+  for (const item of raw) {
+    const a = (item ?? {}) as Record<string, unknown>;
+    const dataUrl = typeof a.dataUrl === "string" ? a.dataUrl.trim() : "";
+    if (!dataUrl) throw new Error("An attachment is missing its data.");
+
+    const parsed = parseImagePart(dataUrl);
+    if (!parsed || parsed.kind !== "base64") {
+      throw new Error("Attachments must be inline base64 images.");
+    }
+    // The declared type is ignored; what matters is what the payload says.
+    if (!ALLOWED_IMAGE_TYPES.has(parsed.mimeType.toLowerCase())) {
+      throw new Error(`Unsupported image type "${parsed.mimeType}".`);
+    }
+
+    // base64 encodes 3 bytes per 4 characters.
+    const bytes = Math.floor((parsed.data.length * 3) / 4);
+    if (bytes > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `"${String(a.name ?? "image")}" is ${(bytes / 1048576).toFixed(1)} MB — the limit is ` +
+          `${MAX_ATTACHMENT_BYTES / 1048576} MB per image.`,
+      );
+    }
+    total += bytes;
+    if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+      throw new Error(
+        `Attachments total more than ${MAX_TOTAL_ATTACHMENT_BYTES / 1048576} MB.`,
+      );
+    }
+
+    const name = typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 120) : "image";
+    out.push({ name, mimeType: parsed.mimeType, dataUrl });
+  }
+  return out;
+}
 
 export function chatUiRoutes(
   cfg: Config,
@@ -233,9 +309,27 @@ export function chatUiRoutes(
       return errorResponse(c, 404, "No such conversation.", "invalid_request_error", "not_found");
     }
 
-    const body = (await c.req.json().catch(() => ({}))) as { content?: string };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      content?: string;
+      attachments?: unknown;
+    };
     const content = typeof body.content === "string" ? body.content.trim() : "";
-    if (!content) {
+
+    let attachments: ChatAttachment[];
+    try {
+      attachments = coerceAttachments(body.attachments);
+    } catch (err) {
+      return errorResponse(
+        c,
+        400,
+        (err as Error).message,
+        "invalid_request_error",
+        "invalid_attachment",
+      );
+    }
+
+    // An image on its own is a legitimate turn — "what is this?" is implied.
+    if (!content && !attachments.length) {
       return errorResponse(c, 400, "Message is empty.", "invalid_request_error", "empty_message");
     }
 
@@ -253,14 +347,32 @@ export function chatUiRoutes(
       );
     }
 
-    chat.addMessage({ conversationId: id, role: "user", content });
-    chat.autoTitle(id, content);
+    chat.addMessage({ conversationId: id, role: "user", content, attachments });
+    chat.autoTitle(id, content || attachments[0]?.name || "Image");
 
+    /*
+     * A turn with images becomes the typed content-part array the rest of the
+     * gateway already understands; a plain turn stays a bare string, so
+     * nothing changes for text-only conversations.
+     */
     const history: OpenAIMessage[] = chat
       .messages(id)
       .filter((m) => !m.error)
       .slice(-MAX_HISTORY_MESSAGES)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) =>
+        m.attachments.length
+          ? {
+              role: m.role,
+              content: [
+                ...m.attachments.map((a) => ({
+                  type: "image_url" as const,
+                  image_url: { url: a.dataUrl },
+                })),
+                ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+              ],
+            }
+          : { role: m.role, content: m.content },
+      );
 
     const controller = new AbortController();
     c.req.raw.signal?.addEventListener("abort", () => controller.abort(), { once: true });

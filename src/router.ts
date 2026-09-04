@@ -97,6 +97,42 @@ export class Router {
   }
 
   /**
+   * Turn a provider's human model name into an id this pool can route.
+   *
+   * The retirement notice says "switch to Gemini 3.7 Flash", not
+   * "gemini-3.7-flash", so the display names discovery already stores are the
+   * first place to look. Falling back to slugifying the name covers a provider
+   * whose catalogue we have not read yet, and the result is only used when it
+   * matches a model something in the pool actually serves — so a bad guess
+   * resolves to nothing rather than to a wrong model.
+   */
+  private resolveModelName(name: string): string | null {
+    const wanted = name.trim().toLowerCase();
+    if (!wanted) return null;
+
+    const servable = new Set<string>();
+    for (const credential of this.store.all()) {
+      for (const model of credential.customModels ?? []) servable.add(model);
+    }
+
+    for (const credential of this.store.all()) {
+      for (const record of Object.values(credential.modelMetadata ?? {})) {
+        if (record.displayName?.trim().toLowerCase() === wanted && servable.has(record.id)) {
+          return record.id;
+        }
+      }
+    }
+
+    // "Gemini 3.7 Flash" -> "gemini-3.7-flash"
+    const slug = wanted.replace(/\s+/g, "-");
+    if (servable.has(slug)) return slug;
+
+    // Some catalogues carry a suffix the notice omits, e.g. a "-high" tier.
+    const prefixed = [...servable].filter((id) => id.toLowerCase().startsWith(`${slug}-`)).sort();
+    return prefixed[0] ?? null;
+  }
+
+  /**
    * Follow a retired model id to its replacement.
    *
    * Providers announce this themselves — Antigravity returns
@@ -463,6 +499,8 @@ export class Router {
       tags?: string[];
       sticky?: string | null;
       providerId?: string | null;
+      /** Internal: set on the one retry after a provider retires a model. */
+      noRetireRetry?: boolean;
     } = {},
   ): Promise<RouteOutcome> {
     /*
@@ -513,6 +551,11 @@ export class Router {
       : Math.max(1, Math.min(this.cfg.maxAttempts, this.store.all().length || 1));
     let attempts = 0;
     let lastFailure: UpstreamFailure | null = null;
+    /**
+     * Display name of the replacement, when the provider refused the model at
+     * generation time and named a successor. Resolved to an id after the loop.
+     */
+    let retiredFor: string | null = null;
 
     if (pinned !== null && !this.store.get(pinned)) {
       return {
@@ -652,14 +695,35 @@ export class Router {
           const ev = next.value;
 
           if (ev.kind === "error") {
+            /*
+             * Preserve a code the transport set deliberately.
+             *
+             * Everything used to be flattened to a transient
+             * `upstream_stream_error`, which blamed the credential — so a
+             * model the provider had retired put a perfectly good account
+             * into cooldown, once per attempt, while the real problem went
+             * unnamed.
+             */
+            const body = (ev.body ?? {}) as Record<string, unknown>;
+            const code = typeof body.code === "string" ? body.code : null;
+            const modelLevel = code === "model_retired" || code === "antigravity_client_outdated";
+
             failedDuringPriming = {
-              kind: "transient",
+              kind: modelLevel ? "terminal" : "transient",
               status: ev.status,
-              code: "upstream_stream_error",
-              message: JSON.stringify(ev.body).slice(0, 300),
+              code: code ?? "upstream_stream_error",
+              message:
+                typeof body.message === "string"
+                  ? body.message
+                  : JSON.stringify(ev.body).slice(0, 300),
               resetsAt: null,
               usageLimited: false,
             };
+            if (code === "model_retired" && typeof body.replacement === "string") {
+              // A *display* name, e.g. "Gemini 3.7 Flash". Resolving it to an
+              // id needs the catalogue, which is done once the loop exits.
+              retiredFor = body.replacement;
+            }
             break;
           }
           buffered.push(ev);
@@ -733,6 +797,30 @@ export class Router {
           replay(buffered, iter),
         ),
       };
+    }
+
+    /*
+     * The provider refused this model at generation time and named its
+     * successor. Learn that, then serve the request with the replacement.
+     *
+     * This is the case the catalogue cannot predict: the retired id is still
+     * listed and still routable, and the refusal only appears in the answer.
+     * Recording it means the next request is redirected by `resolveAlias`
+     * before a single upstream call is made, so this round trip happens once.
+     */
+    if (retiredFor && !opts.noRetireRetry) {
+      const replacement = this.resolveModelName(retiredFor);
+      if (replacement && replacement !== req.model) {
+        this.store.recordRetirement(req.model, replacement);
+        log.info("model_retired_retry", { from: req.model, to: replacement });
+        return await this.chat({ ...req, model: replacement }, signal, {
+          ...opts,
+          // One hop only. A replacement that is itself retired is a provider
+          // inconsistency, and chasing it risks a loop.
+          noRetireRetry: true,
+        });
+      }
+      log.warn("model_retired_unresolved", { model: req.model, named: retiredFor });
     }
 
     // A pinned request has no pool to fall back on, so report what actually

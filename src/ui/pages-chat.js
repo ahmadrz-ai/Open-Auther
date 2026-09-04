@@ -81,9 +81,14 @@ export const chat = {
               <div class="chat-caps" id="c-caps"></div>
             </div>
 
-            <div class="chat-input">
-              <textarea id="c-input" rows="1" placeholder="Send a message to test the model…"></textarea>
+            <div class="chat-attachments" id="c-attachments" hidden></div>
+
+            <div class="chat-input" id="c-dropzone">
+              <input type="file" id="c-file" accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif" multiple hidden>
+              <button class="btn-attach" id="c-attach" title="Attach an image" aria-label="Attach an image">${icon("plus", 17)}</button>
+              <textarea id="c-input" rows="1" placeholder="Send a message, or drop an image here…"></textarea>
               <button class="btn-primary btn-send" id="c-send" title="Send">${icon("chevron", 17)}</button>
+              <div class="chat-drophint" id="c-drophint">Drop images to attach</div>
             </div>
             <div class="chat-foot" id="c-foot"></div>
           </div>
@@ -153,7 +158,17 @@ export const chat = {
 
       thread.innerHTML = messages.map((m) => {
         if (m.role === "user") {
-          return `<div class="msg user"><div class="msg-body">${renderMarkdown(m.content)}</div></div>`;
+          // Images above the caption, matching the order they are sent in.
+          const shots = (m.attachments ?? [])
+            .map(
+              (a) =>
+                `<img class="msg-image" src="${a.dataUrl}" alt="${esc(a.name)}" title="${esc(a.name)}">`,
+            )
+            .join("");
+          return `<div class="msg user"><div class="msg-body">
+            ${shots ? `<div class="msg-images">${shots}</div>` : ""}
+            ${m.content ? renderMarkdown(m.content) : ""}
+          </div></div>`;
         }
         const meta = [
           m.credentialName ? `served by ${esc(m.credentialName)}` : null,
@@ -338,6 +353,144 @@ export const chat = {
       return current;
     };
 
+    /* ---------------------------------------------------- attachments */
+
+    /*
+     * Images staged for the next turn. Held here rather than on the textarea
+     * so a drop, a paste and the file picker all funnel through one path and
+     * the previews stay in sync with what will actually be sent.
+     */
+    let pending = [];
+
+    const MAX_FILES = 8;
+    const MAX_BYTES = 8 * 1024 * 1024;
+    const OK_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/heic", "image/heif"];
+
+    const readAsDataUrl = (file) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+        reader.readAsDataURL(file);
+      });
+
+    const renderAttachments = () => {
+      const box = el("#c-attachments");
+      box.hidden = pending.length === 0;
+      box.innerHTML = pending
+        .map(
+          (a, i) => `
+          <div class="chat-attachment" title="${esc(a.name)}">
+            <img src="${a.dataUrl}" alt="${esc(a.name)}">
+            <button class="chat-attachment-x" data-i="${i}" aria-label="Remove ${esc(a.name)}">
+              ${icon("close", 12)}
+            </button>
+          </div>`,
+        )
+        .join("");
+
+      box.querySelectorAll(".chat-attachment-x").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          pending.splice(Number(btn.dataset.i), 1);
+          renderAttachments();
+        });
+      });
+    };
+
+    /** Stage files from any source, reporting anything rejected. */
+    const addFiles = async (files) => {
+      const list = [...files].filter((f) => f && f.size >= 0);
+      if (!list.length) return;
+
+      for (const file of list) {
+        if (pending.length >= MAX_FILES) {
+          toast(`Up to ${MAX_FILES} images per message.`, "bad");
+          break;
+        }
+        // Some sources hand over an empty type; fall back to the extension so
+        // a pasted screenshot is not rejected for lacking metadata.
+        const type = (file.type || "").toLowerCase();
+        if (type && !OK_TYPES.includes(type)) {
+          toast(`${file.name || "That file"} is not a supported image.`, "bad");
+          continue;
+        }
+        if (file.size > MAX_BYTES) {
+          toast(
+            `${file.name || "Image"} is ${(file.size / 1048576).toFixed(1)} MB — limit is ${MAX_BYTES / 1048576} MB.`,
+            "bad",
+          );
+          continue;
+        }
+        try {
+          const dataUrl = await readAsDataUrl(file);
+          if (!dataUrl.startsWith("data:image/")) {
+            toast(`${file.name || "That file"} is not an image.`, "bad");
+            continue;
+          }
+          pending.push({
+            name: file.name || "pasted-image.png",
+            mimeType: type || dataUrl.slice(5, dataUrl.indexOf(";")),
+            dataUrl,
+          });
+        } catch (err) {
+          toast(err.message, "bad");
+        }
+      }
+      renderAttachments();
+      el("#c-input").focus();
+    };
+
+    el("#c-attach").addEventListener("click", () => el("#c-file").click());
+    el("#c-file").addEventListener("change", (e) => {
+      void addFiles(e.target.files ?? []);
+      // Reset so selecting the same file twice in a row still fires `change`.
+      e.target.value = "";
+    });
+
+    /*
+     * Drag and drop. `dragover` must be cancelled or the browser navigates to
+     * the dropped file instead of handing it over, which loses the whole
+     * conversation.
+     */
+    const zone = el("#c-dropzone");
+    let dragDepth = 0;
+
+    const setDragging = (on) => zone.classList.toggle("dragging", on);
+
+    zone.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      // Nested children each fire dragenter/dragleave, so count depth rather
+      // than toggling, or the hint flickers as the pointer crosses the
+      // textarea.
+      dragDepth += 1;
+      setDragging(true);
+    });
+    zone.addEventListener("dragover", (e) => e.preventDefault());
+    zone.addEventListener("dragleave", () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setDragging(false);
+    });
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      setDragging(false);
+      void addFiles(e.dataTransfer?.files ?? []);
+    });
+
+    /*
+     * Paste. This is the one that matters most in practice: the common case is
+     * a screenshot on the clipboard, which has no file to drag.
+     */
+    el("#c-input").addEventListener("paste", (e) => {
+      const items = [...(e.clipboardData?.items ?? [])];
+      const images = items.filter((i) => i.kind === "file" && i.type.startsWith("image/"));
+      if (!images.length) return;
+      // Only cancel the paste when there is actually an image, so pasting text
+      // behaves exactly as before.
+      e.preventDefault();
+      void addFiles(images.map((i) => i.getAsFile()).filter(Boolean));
+    });
+
     /* ----------------------------------------------------------- send */
 
     const setSending = (on) => {
@@ -350,7 +503,8 @@ export const chat = {
     const send = async () => {
       const input = el("#c-input");
       const content = input.value.trim();
-      if (!content || streaming) return;
+      // An image with no caption is a valid turn — "what is this?" is implied.
+      if ((!content && pending.length === 0) || streaming) return;
 
       // A provider with no known models shows a free-text box, which starts
       // empty. Sending that forwarded an empty model id upstream and came back
@@ -362,10 +516,16 @@ export const chat = {
       }
 
       await ensureConversation();
+
+      // Take the staged images now and clear the composer, so a second send
+      // cannot re-attach what is already in flight.
+      const attachments = pending;
+      pending = [];
+      renderAttachments();
       input.value = "";
       input.style.height = "auto";
 
-      messages.push({ role: "user", content });
+      messages.push({ role: "user", content, attachments });
       messages.push({ role: "assistant", content: "", pending: true });
       renderThread();
       setSending(true);
@@ -382,7 +542,7 @@ export const chat = {
             authorization: `Bearer ${state.key}`,
             accept: "text/event-stream",
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, attachments }),
           signal: abort.signal,
         });
 

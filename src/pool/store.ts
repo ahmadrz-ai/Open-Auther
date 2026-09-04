@@ -11,9 +11,11 @@ import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { ANTIGRAVITY_DEFAULT_MODELS } from "../core/antigravity.js";
 import {
+  discoveredModel,
   parseMetadata,
   toMetadata,
   type DiscoveredModel,
+  type ModelMetadata,
 } from "../core/model-metadata.js";
 import { inferProviderId, providerDef } from "../core/providers.js";
 import { extractWebCredential, WEB_COOKIE_BY_ID } from "../core/webcookie.js";
@@ -1053,6 +1055,64 @@ export class CredentialStore extends EventEmitter {
       retired: chat.filter((m) => m.replacedBy).length,
     });
     return true;
+  }
+
+  /**
+   * Learn, from a live refusal, that a model is retired in favour of another.
+   *
+   * The provider announces this only in the body of an answer, so nothing in
+   * the catalogue predicts it — which is why it is recorded here rather than
+   * being left to the next discovery sweep. Applied to every credential that
+   * lists the retired id, because the retirement is the provider's, not one
+   * account's, and the id is dropped from the routing list so nothing selects
+   * it again while its record survives to carry the redirect.
+   */
+  recordRetirement(retired: string, replacement: string): number {
+    if (!retired || !replacement || retired === replacement) return 0;
+
+    let updated = 0;
+    for (const credential of this.all()) {
+      const listed = (credential.customModels ?? []).some(
+        (model) => model.toLowerCase() === retired.toLowerCase(),
+      );
+      const known = Object.keys(credential.modelMetadata ?? {}).some(
+        (id) => id.toLowerCase() === retired.toLowerCase(),
+      );
+      if (!listed && !known) continue;
+
+      const metadata: ModelMetadata = { ...(credential.modelMetadata ?? {}) };
+      const existing = metadata[retired];
+      metadata[retired] = {
+        ...(existing ??
+          discoveredModel(retired, {}, now())),
+        id: retired,
+        replacedBy: replacement,
+        chat: false,
+        discoveredAt: now(),
+      };
+
+      const models = (credential.customModels ?? []).filter(
+        (model) => model.toLowerCase() !== retired.toLowerCase(),
+      );
+
+      this.db
+        .prepare(
+          "UPDATE credentials SET custom_models = ?, model_metadata = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(
+          models.length ? JSON.stringify(models) : null,
+          JSON.stringify(metadata),
+          now(),
+          credential.id,
+        );
+      updated += 1;
+    }
+
+    if (updated) {
+      this.record("model_retired", null, { retired, replacement, credentials: updated });
+      log.info("model_retired", { retired, replacement, credentials: updated });
+    }
+    return updated;
   }
 
   /**
