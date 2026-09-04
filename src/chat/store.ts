@@ -21,11 +21,25 @@ export interface Conversation {
   messageCount?: number;
 }
 
+/**
+ * One image attached to a playground message.
+ *
+ * `dataUrl` holds the whole payload inline, which is why the API layer caps
+ * both per-file and per-message size before any of this is stored.
+ */
+export interface ChatAttachment {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
 export interface ChatMessage {
   id: number;
   conversationId: number;
   role: "user" | "assistant" | "system";
   content: string;
+  /** Images sent with this turn. Empty for an ordinary text message. */
+  attachments: ChatAttachment[];
   credentialId: number | null;
   credentialName: string | null;
   tokens: number;
@@ -51,6 +65,7 @@ interface MessageRow {
   conversation_id: number;
   role: string;
   content: string;
+  attachments?: string | null;
   credential_id: number | null;
   credential_name: string | null;
   tokens: number;
@@ -71,11 +86,26 @@ const toConversation = (r: ConversationRow): Conversation => ({
   messageCount: r.message_count ?? 0,
 });
 
+const parseAttachments = (raw: string | null | undefined): ChatAttachment[] => {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (a): a is ChatAttachment =>
+        Boolean(a) && typeof (a as ChatAttachment).dataUrl === "string",
+    );
+  } catch {
+    return [];
+  }
+};
+
 const toMessage = (r: MessageRow): ChatMessage => ({
   id: r.id,
   conversationId: r.conversation_id,
   role: r.role as ChatMessage["role"],
   content: r.content,
+  attachments: parseAttachments(r.attachments),
   credentialId: r.credential_id,
   credentialName: r.credential_name,
   tokens: r.tokens,
@@ -188,6 +218,7 @@ export class ChatStore {
     conversationId: number;
     role: ChatMessage["role"];
     content: string;
+    attachments?: ChatAttachment[];
     credentialId?: number | null;
     credentialName?: string | null;
     tokens?: number;
@@ -198,14 +229,15 @@ export class ChatStore {
     this.db
       .prepare(
         `INSERT INTO chat_messages
-           (conversation_id, role, content, credential_id, credential_name,
+           (conversation_id, role, content, attachments, credential_id, credential_name,
             tokens, latency_ms, error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.conversationId,
         input.role,
         input.content,
+        input.attachments?.length ? JSON.stringify(input.attachments) : null,
         input.credentialId ?? null,
         input.credentialName ?? null,
         input.tokens ?? 0,

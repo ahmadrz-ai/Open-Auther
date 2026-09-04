@@ -14,6 +14,7 @@
  */
 
 import type { Credential } from "../pool/types.js";
+import { imagesOf, textOfParts, toAnthropicPart } from "./media.js";
 import { CLIENT_PARAMS, type CodexEvent, type CodexRequest } from "./translate.js";
 
 /** The dated API version this adapter is written against. */
@@ -31,13 +32,6 @@ export function anthropicHeaders(credential: Credential): Record<string, string>
   };
 }
 
-/** Flatten a normalised content-part array to plain text. */
-function textOf(parts: unknown): string {
-  if (typeof parts === "string") return parts;
-  if (!Array.isArray(parts)) return "";
-  return parts.map((p) => String((p as { text?: unknown }).text ?? "")).join("");
-}
-
 /**
  * Translate a normalised request into an Anthropic Messages body.
  *
@@ -45,18 +39,61 @@ function textOf(parts: unknown): string {
  * turns, which is easy to produce from a tool-call round trip.
  */
 export function toAnthropicRequest(body: CodexRequest): Record<string, unknown> {
-  const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+  /**
+   * Anthropic accepts either a plain string or an array of typed blocks. Text
+   * turns stay strings so nothing changes for the common case; a turn carrying
+   * an image becomes blocks.
+   */
+  type Block = Record<string, unknown>;
+  const messages: Array<{ role: "user" | "assistant"; content: string | Block[] }> = [];
 
   const push = (role: "user" | "assistant", text: string) => {
     if (!text) return;
     const last = messages[messages.length - 1];
-    if (last && last.role === role) last.content += `\n\n${text}`;
-    else messages.push({ role, content: text });
+    if (last && last.role === role) {
+      if (typeof last.content === "string") last.content += `\n\n${text}`;
+      else last.content.push({ type: "text", text });
+    } else {
+      messages.push({ role, content: text });
+    }
+  };
+
+  /*
+   * Images were dropped outright here: `textOf` reads `p.text` and an image
+   * part has none, so the block never reached the request.
+   */
+  const pushBlocks = (role: "user" | "assistant", blocks: Block[]) => {
+    if (!blocks.length) return;
+    const last = messages[messages.length - 1];
+    if (last && last.role === role) {
+      const existing =
+        typeof last.content === "string"
+          ? last.content
+            ? [{ type: "text", text: last.content }]
+            : []
+          : last.content;
+      last.content = [...existing, ...blocks];
+    } else {
+      messages.push({ role, content: blocks });
+    }
   };
 
   for (const item of body.input) {
     if (item.type === "message") {
-      push(item.role === "assistant" ? "assistant" : "user", textOf(item.content));
+      const role = item.role === "assistant" ? "assistant" : "user";
+      const text = textOfParts(item.content);
+      const images = imagesOf(item.content);
+
+      if (images.length) {
+        // Image before the text that refers to it, which is the order
+        // Anthropic's own vision guidance recommends.
+        pushBlocks(role, [
+          ...images.map(toAnthropicPart),
+          ...(text ? [{ type: "text", text }] : []),
+        ]);
+      } else {
+        push(role, text);
+      }
     } else if (item.type === "function_call") {
       // Tools are not mapped yet. Keeping the intent visible beats dropping
       // the turn, which would leave the transcript incoherent.

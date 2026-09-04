@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -278,6 +278,22 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE credentials ADD COLUMN model_metadata TEXT;
   ALTER TABLE credentials ADD COLUMN models_synced_at INTEGER;
+  `,
+
+  // v16 — attachments on a playground message.
+  //
+  // The composer was text-only, so there was no way to try a vision model from
+  // the dashboard at all — the one place you would naturally go to check
+  // whether image input works. Stored as JSON alongside the message so the
+  // thread can re-render an image after a reload:
+  //
+  //   [{name, mimeType, dataUrl}]
+  //
+  // These hold base64 payloads and so are the largest thing in this database.
+  // The API layer caps both the per-file and per-message size before anything
+  // reaches here.
+  `
+  ALTER TABLE chat_messages ADD COLUMN attachments TEXT;
   `,
 ];
 

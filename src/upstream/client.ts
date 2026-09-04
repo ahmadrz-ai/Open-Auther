@@ -12,6 +12,7 @@ import { createLogger } from "../logging.js";
 import { classifyHttp, classifyTransport, type UpstreamFailure } from "../pool/errors.js";
 import type { Credential, CustomProtocol, ProviderType } from "../pool/types.js";
 import { codexHeaders } from "./codex.js";
+import { imagesOf, textOfParts, toOpenAiPart } from "./media.js";
 import { anthropicHeaders, mapAnthropicEvent, toAnthropicRequest } from "./anthropic.js";
 import { callAntigravity, mapAntigravityEvent } from "./antigravity.js";
 import { callKimiWeb, kimiEvents } from "./kimiweb.js";
@@ -60,9 +61,29 @@ function toChatCompletionsBody(body: CodexRequest): Record<string, unknown> {
 
   for (const item of body.input) {
     if (item.type !== "message") continue;
-    const parts = item.content as Array<Record<string, unknown>> | undefined;
-    const text = parts?.map((p) => p.text ?? "").join("") ?? "";
-    messages.push({ role: item.role, content: text });
+    const text = textOfParts(item.content);
+    const images = imagesOf(item.content);
+
+    /*
+     * Only use the array content form when there is actually an image. Plain
+     * text stays a plain string, because a handful of OpenAI-compatible
+     * servers (older vLLM and llama.cpp builds among them) accept only a
+     * string and 400 on the typed-part array.
+     *
+     * This previously joined `p.text` across parts, which silently discarded
+     * every image before the request was sent.
+     */
+    if (images.length) {
+      messages.push({
+        role: item.role,
+        content: [
+          ...images.map(toOpenAiPart),
+          ...(text ? [{ type: "text", text }] : []),
+        ],
+      });
+    } else {
+      messages.push({ role: item.role, content: text });
+    }
   }
 
   const tools = body.tools?.length
