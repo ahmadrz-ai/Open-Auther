@@ -181,6 +181,26 @@ export async function syncCredential(
   store.setDiscoveredModels(credential.id, discovered);
 
   /*
+   * A live catalogue proves the credential authenticates, so a terminal state
+   * recorded against a *model* is stale and must not outlive it. Only these
+   * codes are cleared: a revoked token or a refused plan is a real death and
+   * discovery says nothing about either.
+   */
+  const MODEL_LEVEL_DEATHS = new Set([
+    "model_retired",
+    "model_unsupported",
+    "antigravity_client_outdated",
+    "plan_unsupported_on_codex",
+  ]);
+  if (credential.state === "dead" && MODEL_LEVEL_DEATHS.has(credential.lastError ?? "")) {
+    store.revive(credential.id);
+    log.info("revived_after_sync", {
+      credential: credential.id,
+      was: credential.lastError,
+    });
+  }
+
+  /*
    * Recorded failures were measured against the previous catalogue — often
    * against a client version the backend has since stopped accepting — so a
    * changed list invalidates them. Successes are kept; they are still
@@ -213,9 +233,16 @@ export interface SweepOptions {
   credentialId?: number;
 }
 
-/** True when this credential is due a sync under the configured TTL. */
+/**
+ * True when this credential is due a sync under the configured TTL.
+ *
+ * Dead credentials are included, which is deliberate. Excluding them created a
+ * trap: a credential killed by a stale catalogue could never refresh that
+ * catalogue, so it stayed dead for a reason discovery would have fixed. A sync
+ * is a single cheap read that changes nothing on failure, so attempting one is
+ * always cheaper than a permanently stuck account.
+ */
 function isDue(credential: Credential, ttlSeconds: number, at: number): boolean {
-  if (credential.state === "dead") return false;
   if (credential.modelsSyncedAt === null) return true;
   return at - credential.modelsSyncedAt >= ttlSeconds;
 }

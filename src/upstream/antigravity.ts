@@ -408,6 +408,17 @@ export function mapAntigravityEvent(raw: Record<string, unknown>): CodexEvent[] 
   return out;
 }
 
+/**
+ * Editor surfaces that live in the model catalogue but cannot hold a chat.
+ *
+ * `chat_20706` and `chat_23310` are the IDE's own internal completion slots —
+ * note the backend lists them under `tabModelIds`, despite the name — and
+ * `tab_*` are tab-completion models. Both answer nothing useful to a chat
+ * request. Matched by prefix because that is the only reliable signal: they
+ * are not consistently listed in the type arrays.
+ */
+const INTERNAL_SURFACE = /^(chat|tab)_/i;
+
 /** One model as the Antigravity backend describes it. */
 export interface AntigravityModel {
   id: string;
@@ -499,12 +510,23 @@ export async function fetchAntigravityCatalogue(
             typeof quota.remainingFraction === "number" ? quota.remainingFraction : null,
           resetTime: typeof quota.resetTime === "string" ? quota.resetTime : null,
           /*
-           * A chat model has a display name and is not a listed tab/image
-           * surface. The internal `chat_20706` / `tab_*` entries carry no
-           * display name, which is the backend's own tell that they are not
-           * user-facing models.
+           * A chat model is anything the backend has not listed as another
+           * kind of surface.
+           *
+           * This used to also require a display name, on the theory that the
+           * internal `chat_20706` / `tab_*` entries carry none and that was
+           * the backend's own tell. It is not: `gemini-3.6-flash-tiered` and
+           * `gemini-3.7-flash-tiered` are ordinary chat models that simply
+           * ship without a label. Excluding them hid the newest model on the
+           * account — and when the backend then retired an older id and said
+           * "switch to Gemini 3.7 Flash", the replacement it named was one we
+           * had filtered out, so the redirect could never resolve and the
+           * request failed permanently.
+           *
+           * The internal surfaces are identified by their id prefix instead,
+           * which is what actually distinguishes them.
            */
-          chat: !nonChat.has(id) && displayName !== null,
+          chat: !nonChat.has(id) && !INTERNAL_SURFACE.test(id),
           replacedBy: deprecated[id]?.newModelId ?? null,
         });
       }
