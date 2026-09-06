@@ -1,6 +1,6 @@
 {
   "name": "open-auther",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Professional-grade authentication and model routing library",
   "keywords": [
     "openai-compatible",

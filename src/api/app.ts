@@ -18,6 +18,7 @@ import { providerRoutes } from "./providers.js";
 import { adminRoutes, buildStatus } from "./admin.js";
 import { gatewayAuth } from "./auth.js";
 import { chatCompletionsHandler } from "./chat.js";
+import { messagesRoutes, registerHelloProbe } from "./messages.js";
 import { errorResponse } from "./errors.js";
 import { LoginSessions } from "./oauth.js";
 import { checkForUpdate } from "../core/update.js";
@@ -108,6 +109,13 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
   });
 
   // ------------------------------------------------------------- unauthed
+  /*
+   * Connection-warming probe from the Claude clients, sent before any
+   * credential is presented. Answering it costs nothing and its absence shows
+   * up as a confusing failure during setup.
+   */
+  registerHelloProbe(app);
+
   app.get("/health", (c) => {
     const s = buildStatus(cfg, store).summary;
     return c.json({
@@ -125,6 +133,13 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
 
   const cavemanHistory = new CavemanHistory(db);
   app.post("/v1/chat/completions", chatCompletionsHandler(cfg, router, store, cavemanHistory));
+
+  /*
+   * The Anthropic Messages surface, for Claude Code and the Claude desktop
+   * app's third-party inference mode. Mounted at the root because those
+   * clients post to `/v1/messages?beta=true` and the path is what matters.
+   */
+  app.route("/", messagesRoutes(cfg, store, router));
 
   /*
    * Every model the pool can actually serve, not a hand-maintained list.

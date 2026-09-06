@@ -206,6 +206,69 @@ version and where it came from. `open-auther doctor` reports the version in use
 and warns when it is the fallback guess rather than something read off the
 machine.
 
+## Use it from Claude Code and the Claude desktop app
+
+The gateway also serves the **Anthropic Messages API** at `/v1/messages`, which
+is what Claude Code and the Claude desktop app's third-party inference mode
+connect to. Point either at Open-Auther and your pooled models answer instead
+of Anthropic's.
+
+In the desktop app: **Developer → Configure Third-Party Inference**, set
+Connection to `Gateway`, then:
+
+```text
+Gateway base URL   http://127.0.0.1:8787
+Gateway API key    your open-auther key (open-auther key show)
+Gateway auth scheme  either — x-api-key and Bearer are both accepted
+```
+
+For Claude Code, the same thing through the environment:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+export ANTHROPIC_AUTH_TOKEN=your-open-auther-key
+```
+
+### Which model actually answers
+
+These clients send the Claude model they believe they are talking to, such as
+`claude-sonnet-4-6`, which your pool almost certainly does not serve. Rather
+than fail, the request is mapped:
+
+```text
+1  an explicit entry in `anthropicModelMap`
+2  the requested id itself, when a connection really does serve it
+3  `anthropicDefaultModel` — `auto` by default, so routing picks what is healthy
+```
+
+Set `AI_AUTHER_ANTHROPIC_MODEL` to change the default, or pin specific names in
+the config file:
+
+```json
+{
+  "anthropicDefaultModel": "quality",
+  "anthropicModelMap": { "claude-opus-4-6": "gemini-3.7-flash-tiered" }
+}
+```
+
+Model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`) reads
+`/v1/models`, but the client only keeps ids containing `claude` or `anthropic`,
+so pooled models under other names will not appear in its `/model` picker. The
+mapping above is what routes them regardless of which name the client picked.
+
+### What is implemented
+
+```text
+POST /v1/messages               streaming and non-streaming, tools, images
+POST /v1/messages/count_tokens  optional; a deliberate overestimate
+GET  /v1/models                 discovery shape
+HEAD /api/hello                 connection warm-up probe
+```
+
+Replies stream as Anthropic content blocks, and `ping` frames are emitted
+during silent gaps — the client counts bytes and aborts a stream that goes
+quiet for 300 seconds, which a thinking model would otherwise trigger.
+
 ## Custom endpoint protocols
 
 A custom provider's wire protocol is detected, not assumed. Detection probes in

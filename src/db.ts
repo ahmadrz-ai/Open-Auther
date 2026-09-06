@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -294,6 +294,29 @@ const MIGRATIONS: string[] = [
   // reaches here.
   `
   ALTER TABLE chat_messages ADD COLUMN attachments TEXT;
+  `,
+
+  // v17 — revive credentials killed by a model-level failure.
+  //
+  // 1.1.1 classified `model_retired` as a terminal failure, and terminal maps
+  // onto "mark the credential dead". So a model the provider had retired
+  // killed the account that reported it — and because the model sweep skipped
+  // dead credentials, the catalogue could never refresh, the replacement model
+  // was never discovered, and every later request failed identically. Three
+  // working Antigravity accounts went dead from one retired model id.
+  //
+  // The classification is fixed in the router. This repairs databases that
+  // already ran it. Scoped to exactly the codes that were misclassified, so a
+  // genuine death — a revoked token, a refused plan — is left alone. Cooldowns
+  // are cleared with it, or a revived row would sit out its old penalty.
+  `
+  UPDATE credentials
+     SET state = 'active',
+         last_error = NULL,
+         cooldown_until = NULL,
+         models_synced_at = NULL
+   WHERE state = 'dead'
+     AND last_error IN ('model_retired', 'model_unsupported', 'antigravity_client_outdated');
   `,
 ];
 

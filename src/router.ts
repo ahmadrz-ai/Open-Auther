@@ -127,9 +127,28 @@ export class Router {
     const slug = wanted.replace(/\s+/g, "-");
     if (servable.has(slug)) return slug;
 
-    // Some catalogues carry a suffix the notice omits, e.g. a "-high" tier.
-    const prefixed = [...servable].filter((id) => id.toLowerCase().startsWith(`${slug}-`)).sort();
-    return prefixed[0] ?? null;
+    /*
+     * The notice names a family, not an id: Antigravity says "Gemini 3.7
+     * Flash" while the catalogue carries `gemini-3.7-flash-tiered`,
+     * `-high`, `-low` and so on. Where several variants match, prefer one the
+     * pool has actually seen answer — redirecting into a variant that returns
+     * an empty completion trades one broken model for another, and a proven
+     * sibling is a better guess than alphabetical order.
+     */
+    const prefixed = [...servable].filter((id) => id.toLowerCase().startsWith(`${slug}-`));
+    if (!prefixed.length) return null;
+
+    const proven = (id: string): number => {
+      let score = 0;
+      for (const credential of this.store.all()) {
+        const stat = credential.modelStats[id];
+        if (stat?.ok) score += 2;
+        else if (stat) score -= 1;
+      }
+      return score;
+    };
+
+    return [...prefixed].sort((a, b) => proven(b) - proven(a) || a.localeCompare(b))[0] ?? null;
   }
 
   /**
@@ -188,6 +207,28 @@ export class Router {
 
   /** Apply the consequences of a failure to the credential that produced it. */
   private penalise(credential: Credential, failure: UpstreamFailure, model?: string): void {
+    /*
+     * A model's fault is never the account's fault.
+     *
+     * Checked before anything else because the cost of getting it wrong is
+     * asymmetric: benching a model that was fine costs one retry, while
+     * killing an account that was fine removes it from the pool until someone
+     * notices and revives it by hand. A `model_retired` failure classified as
+     * terminal once killed three working Antigravity accounts for exactly
+     * this reason.
+     */
+    if (failure.modelUnsupported) {
+      if (model) {
+        this.store.setModelStat(credential.id, model, {
+          ok: false,
+          latencyMs: 0,
+          ts: now(),
+          error: failure.code ?? "model_unsupported",
+        });
+      }
+      return;
+    }
+
     if (failure.kind === "terminal") {
       this.store.markDead(credential.id, failure.code ?? `http_${failure.status}`);
       return;
@@ -708,8 +749,21 @@ export class Router {
             const code = typeof body.code === "string" ? body.code : null;
             const modelLevel = code === "model_retired" || code === "antigravity_client_outdated";
 
+            /*
+             * A model-level refusal is `client` + `modelUnsupported`, never
+             * `terminal`.
+             *
+             * This was `terminal` and it did real damage: `penalise` maps
+             * terminal onto `markDead`, so a model the provider had retired
+             * killed the *account* that reported it. All three Antigravity
+             * connections went dead with `last_error: model_retired`, and
+             * because the sweep skipped dead credentials the catalogue could
+             * never refresh — so the replacement model was never discovered
+             * and every later request failed the same way. A self-inflicted
+             * loop that got worse the more it ran.
+             */
             failedDuringPriming = {
-              kind: modelLevel ? "terminal" : "transient",
+              kind: modelLevel ? "client" : "transient",
               status: ev.status,
               code: code ?? "upstream_stream_error",
               message:
@@ -718,6 +772,7 @@ export class Router {
                   : JSON.stringify(ev.body).slice(0, 300),
               resetsAt: null,
               usageLimited: false,
+              ...(modelLevel ? { modelUnsupported: true } : {}),
             };
             if (code === "model_retired" && typeof body.replacement === "string") {
               // A *display* name, e.g. "Gemini 3.7 Flash". Resolving it to an
