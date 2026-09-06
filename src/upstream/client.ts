@@ -60,6 +60,40 @@ function toChatCompletionsBody(body: CodexRequest): Record<string, unknown> {
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
 
   for (const item of body.input) {
+    /*
+     * Tool calls and their results are top-level items in the Responses shape,
+     * not message fields, and this loop used to skip everything that was not a
+     * `message` — so both were dropped on the way to every OpenAI-compatible
+     * provider. An agentic client got its tool schema forwarded, called a
+     * tool, and then sent a follow-up whose call and result had vanished, so
+     * the model saw a request to use a tool and no evidence it ever had.
+     */
+    if (item.type === "function_call") {
+      messages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: String(item.call_id ?? ""),
+            type: "function",
+            function: {
+              name: String(item.name ?? ""),
+              arguments: String(item.arguments ?? "{}"),
+            },
+          },
+        ],
+      });
+      continue;
+    }
+    if (item.type === "function_call_output") {
+      messages.push({
+        role: "tool",
+        tool_call_id: String(item.call_id ?? ""),
+        content: String(item.output ?? ""),
+      });
+      continue;
+    }
+
     if (item.type !== "message") continue;
     const text = textOfParts(item.content);
     const images = imagesOf(item.content);

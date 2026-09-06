@@ -124,6 +124,25 @@ export interface Config {
    * day it was created.
    */
   modelSyncHours: number;
+
+  /**
+   * Which pooled model answers when an Anthropic-format client asks for a
+   * model the pool does not serve.
+   *
+   * Claude Code and the Claude desktop app send the model they believe they
+   * are talking to — `claude-sonnet-4-6` and the like. Defaulting to a virtual
+   * id means routing picks whatever is healthy rather than failing on a name
+   * no connection here has ever heard of.
+   */
+  anthropicDefaultModel: string;
+
+  /**
+   * Explicit `requested model -> served model` overrides for that surface.
+   *
+   * Set this to pin a specific Claude model name onto a specific pooled model,
+   * e.g. `{"claude-opus-4-6": "gemini-3.7-flash-tiered"}`.
+   */
+  anthropicModelMap: Record<string, string>;
 }
 
 /** Fields the Settings page is allowed to change at runtime. */
@@ -204,6 +223,13 @@ const DEFAULTS = {
    * connection that has not synced yet.
    */
   modelSyncHours: 6,
+  /*
+   * A virtual id on purpose. An Anthropic-format client asks for a Claude
+   * model name the pool almost never serves, and resolving that to `auto`
+   * means the request is answered by whatever is healthy instead of failing
+   * on a name no connection here has heard of.
+   */
+  anthropicDefaultModel: "auto",
 };
 
 export function defaultHome(): string {
@@ -337,6 +363,11 @@ export function loadConfig(): Config {
       "AI_AUTHER_MODEL_SYNC_HOURS",
       file.modelSyncHours ?? DEFAULTS.modelSyncHours,
     ),
+    anthropicDefaultModel:
+      process.env.AI_AUTHER_ANTHROPIC_MODEL ??
+      file.anthropicDefaultModel ??
+      DEFAULTS.anthropicDefaultModel,
+    anthropicModelMap: file.anthropicModelMap ?? {},
   };
 
   if (cfg.maxAttempts < 1) throw new Error("maxAttempts must be at least 1");
