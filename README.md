@@ -251,10 +251,23 @@ the config file:
 }
 ```
 
-Model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`) reads
-`/v1/models`, but the client only keeps ids containing `claude` or `anthropic`,
-so pooled models under other names will not appear in its `/model` picker. The
-mapping above is what routes them regardless of which name the client picked.
+### Seeing your non-Claude models in the picker
+
+These clients keep only discovered ids containing `claude` or `anthropic`, and
+silently drop the rest — so a pool of Gemini, GPT and Qwen ids shows up in the
+model picker as nothing at all. That filter is client-side; the gateway cannot
+change it. Three ways round it:
+
+1. **Type them in.** The client's own *Models → Model list* box overrides
+   discovery entirely. Enter `gemini-3.8-flash-tiered` and it is sent verbatim.
+   Nothing to configure here.
+2. **Map them.** Leave the picker on a Claude name and point it elsewhere with
+   `anthropicModelMap`, above.
+3. **Advertise them under an alias.** Set `AI_AUTHER_ANTHROPIC_EXPOSE_ALL=1` and
+   every non-Claude model is additionally listed as
+   `anthropic/openauther-<id>`, which passes the filter. The prefix is stripped
+   before routing, so it never reaches a provider. Off by default, because it
+   shows every model twice to anything speaking the OpenAI shape.
 
 The base URL is the **bare origin**, with no `/v1` — these clients append
 `/v1/messages` themselves. The gateway's startup banner prints both, because

@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -317,6 +317,27 @@ const MIGRATIONS: string[] = [
          models_synced_at = NULL
    WHERE state = 'dead'
      AND last_error IN ('model_retired', 'model_unsupported', 'antigravity_client_outdated');
+  `,
+
+  // v18 — revive credentials killed by a model's entitlement.
+  //
+  // Every 403 was classified as a dead token, but aggregators answer "this
+  // premium model requires an active paid plan" with 403 too. One request for
+  // a premium model therefore killed four working accounts in a row: each
+  // rotation found the next credential, asked for the same model, and killed
+  // that one as well. The key was never the problem.
+  //
+  // The classifier now reads the wording and benches the model instead. This
+  // repairs databases that already ran the old rule. `permission_denied` is
+  // the code those providers return; a genuinely revoked key reports one of
+  // the terminal codes, which are left alone.
+  `
+  UPDATE credentials
+     SET state = 'active',
+         last_error = NULL,
+         cooldown_until = NULL
+   WHERE state = 'dead'
+     AND last_error IN ('permission_denied', 'model_requires_paid_plan');
   `,
 ];
 

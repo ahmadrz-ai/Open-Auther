@@ -18,7 +18,7 @@ import { providerRoutes } from "./providers.js";
 import { adminRoutes, buildStatus } from "./admin.js";
 import { gatewayAuth } from "./auth.js";
 import { chatCompletionsHandler } from "./chat.js";
-import { messagesRoutes, registerHelloProbe } from "./messages.js";
+import { ALIAS_PREFIX, messagesRoutes, registerHelloProbe } from "./messages.js";
 import { errorResponse } from "./errors.js";
 import { LoginSessions } from "./oauth.js";
 import { checkForUpdate } from "../core/update.js";
@@ -155,14 +155,38 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
       includeVirtual: true,
     });
 
+    /*
+     * Claude Code keeps a discovered model only when its id contains `claude`
+     * or `anthropic`, and silently drops everything else — so a pool of
+     * Gemini, GPT and Qwen ids shows up in its picker as nothing at all. When
+     * `anthropicExposeAll` is on, those ids are additionally offered under an
+     * alias that passes the filter; `/v1/messages` strips it before routing,
+     * so the alias never reaches a provider.
+     *
+     * Off by default: it only helps one client, and an OpenAI-compatible
+     * client would otherwise see every model twice.
+     */
+    const aliased =
+      cfg.anthropicExposeAll && /\/v1\/v1\/models|\/v1\/models/.test(new URL(c.req.url).pathname)
+        ? entries
+            .filter((m) => !/claude|anthropic/i.test(m.id))
+            .map((m) => ({
+              ...m,
+              id: `${ALIAS_PREFIX}${m.id}`,
+              description: `${m.description ?? `Served by ${m.providers.join(", ")}`} (via Open-Auther)`,
+            }))
+        : [];
+
     return c.json({
       object: "list",
-      data: entries.map((m) => ({
+      data: [...entries, ...aliased].map((m) => ({
         id: m.id,
         object: "model",
         created,
         owned_by: m.virtual ? "open-auther" : m.providers.join(","),
-        // Non-standard, but harmless to clients and useful in a browser.
+        // `display_name` and `description` are what the Claude model picker
+        // renders; harmless to every other client.
+        display_name: m.id,
         ...(m.description ? { description: m.description } : {}),
       })),
     });

@@ -8,7 +8,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { fromAnthropicRequest, resolveRequestedModel } from "../src/api/messages.js";
+import {
+  ALIAS_PREFIX,
+  fromAnthropicRequest,
+  resolveRequestedModel,
+} from "../src/api/messages.js";
+import { classifyHttp } from "../src/pool/errors.js";
 import { toCodexRequest } from "../src/upstream/translate.js";
 import { testConfig } from "./fixtures.js";
 
@@ -128,6 +133,50 @@ describe("mapping the requested model", () => {
     });
     expect(resolveRequestedModel("claude-opus-4-6", pinned, servable).model).toBe(
       "gemini-3.7-flash-tiered",
+    );
+  });
+});
+
+describe("a model's entitlement is not the credential's fault", () => {
+  it("benches the model when a 403 says the model needs a paid plan", () => {
+    const failure = classifyHttp(
+      403,
+      {
+        error: {
+          type: "invalid_request_error",
+          message:
+            "This premium model requires an active paid plan or real deposited balance. " +
+            "Subscribe to a plan or top up your wallet to use it — promotional/bonus credits do not apply.",
+        },
+      },
+      undefined,
+    );
+
+    // `terminal` would send this to markDead and kill a working account.
+    expect(failure.kind).toBe("client");
+    expect(failure.modelUnsupported).toBe(true);
+  });
+
+  it("still treats a real 403 auth failure as terminal", () => {
+    const failure = classifyHttp(403, { error: { message: "Forbidden: invalid API key" } }, undefined);
+    expect(failure.kind).toBe("terminal");
+    expect(failure.modelUnsupported).toBeUndefined();
+  });
+});
+
+describe("the discovery alias", () => {
+  const cfg = testConfig({ anthropicDefaultModel: "auto", anthropicModelMap: {} });
+  const servable = new Set(["auto", "gemini-3.8-flash-tiered"]);
+
+  it("routes an aliased id to the real model", () => {
+    expect(
+      resolveRequestedModel(`${ALIAS_PREFIX}gemini-3.8-flash-tiered`, cfg, servable),
+    ).toEqual({ model: "gemini-3.8-flash-tiered", mapped: false });
+  });
+
+  it("leaves an ordinary id alone", () => {
+    expect(resolveRequestedModel("gemini-3.8-flash-tiered", cfg, servable).model).toBe(
+      "gemini-3.8-flash-tiered",
     );
   });
 });

@@ -190,6 +190,39 @@ export function classifyHttp(status: number, body: unknown, rawText?: string): U
     return { kind: "transient", status, code, message, resetsAt, usageLimited: true };
   }
 
+  /*
+   * A 403 about the *model's* entitlement, not the credential's validity.
+   *
+   * Aggregators answer "this premium model requires an active paid plan" with
+   * 403, and the blanket rule below reads every 403 as a dead token — so one
+   * request for a premium model killed four working accounts in a row, each
+   * rotation finding the next credential and killing that too. The key is
+   * fine; it simply may not use that model.
+   *
+   * Matched on wording rather than status because the distinction does not
+   * exist in the status code, and the wording is specific: a revoked key is
+   * never described in terms of plans, balances or subscriptions. Anything
+   * that does not match stays terminal, so a genuine auth failure is still
+   * treated as one.
+   */
+  if (
+    status === 403 &&
+    /(requires? (an? )?(active )?(paid|premium|pro) plan|paid plan or real deposited balance|top up your (wallet|balance)|subscribe to a plan|upgrade your plan|not available on your (current )?plan|requires? a subscription|premium model)/i.test(
+      `${message} ${rawText ?? ""}`,
+    )
+  ) {
+    return {
+      kind: "client",
+      status,
+      code: code ?? "model_requires_paid_plan",
+      message,
+      resetsAt: null,
+      usageLimited: false,
+      // Bench the model on this credential and rotate; never kill the account.
+      modelUnsupported: true,
+    };
+  }
+
   // Auth failures with no terminal code: the token is stale or has been
   // invalidated server-side. The refresh path decides which; from the router's
   // point of view this credential is unusable right now.

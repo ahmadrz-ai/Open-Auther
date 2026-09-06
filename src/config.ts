@@ -143,6 +143,17 @@ export interface Config {
    * e.g. `{"claude-opus-4-6": "gemini-3.7-flash-tiered"}`.
    */
   anthropicModelMap: Record<string, string>;
+
+  /**
+   * Additionally advertise non-Claude models under an alias the Claude
+   * clients' discovery filter accepts.
+   *
+   * Those clients keep only discovered ids containing `claude` or `anthropic`
+   * and silently drop the rest, so a pool of Gemini, GPT and Qwen ids appears
+   * in their model picker as nothing at all. Off by default, because it helps
+   * one client and would show every model twice to every other.
+   */
+  anthropicExposeAll: boolean;
 }
 
 /** Fields the Settings page is allowed to change at runtime. */
@@ -230,6 +241,11 @@ const DEFAULTS = {
    * on a name no connection here has heard of.
    */
   anthropicDefaultModel: "auto",
+  /*
+   * Opt-in. Only the Claude clients need the alias, and turning it on shows
+   * every pooled model twice to anything speaking the OpenAI shape.
+   */
+  anthropicExposeAll: false,
 };
 
 export function defaultHome(): string {
@@ -368,6 +384,10 @@ export function loadConfig(): Config {
       file.anthropicDefaultModel ??
       DEFAULTS.anthropicDefaultModel,
     anthropicModelMap: file.anthropicModelMap ?? {},
+    anthropicExposeAll: envBool(
+      "AI_AUTHER_ANTHROPIC_EXPOSE_ALL",
+      file.anthropicExposeAll ?? DEFAULTS.anthropicExposeAll,
+    ),
   };
 
   if (cfg.maxAttempts < 1) throw new Error("maxAttempts must be at least 1");

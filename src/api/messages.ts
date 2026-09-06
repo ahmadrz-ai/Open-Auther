@@ -262,12 +262,28 @@ function reasoningEffort(
  * something in the pool really does serve it, then the configured default,
  * which is a virtual id (`auto`) so routing picks whatever is healthy.
  */
+/**
+ * Prefix used to smuggle a non-Claude model past the client's discovery filter.
+ *
+ * Claude Code keeps a discovered model only when its id contains `claude` or
+ * `anthropic`, matched case-insensitively, and drops the rest — so a pool full
+ * of Gemini, GPT and Qwen ids appears in the picker as nothing at all. The
+ * prefix is added on the way out of `/v1/models` and stripped again here, so
+ * routing still sees the real id.
+ */
+export const ALIAS_PREFIX = "anthropic/openauther-";
+
+/** Strip the discovery alias, if the client is echoing one back. */
+export function stripAliasPrefix(model: string): string {
+  return model.startsWith(ALIAS_PREFIX) ? model.slice(ALIAS_PREFIX.length) : model;
+}
+
 export function resolveRequestedModel(
   requested: string,
   cfg: Config,
   servable: ReadonlySet<string>,
 ): { model: string; mapped: boolean } {
-  const asked = requested.trim();
+  const asked = stripAliasPrefix(requested.trim());
 
   const override =
     cfg.anthropicModelMap[asked] ??

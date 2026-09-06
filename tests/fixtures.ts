@@ -82,6 +82,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     logLevel: "error",
     logPretty: false,
     ui: false,
+    anthropicExposeAll: false,
     // Off by default: a test must never start a background sweep that reaches
     // for the network.
     modelSyncHours: 0,
