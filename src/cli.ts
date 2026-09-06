@@ -87,6 +87,14 @@ async function cmdServe(): Promise<void> {
     out(`  ${C.dim}base_url${C.reset}   ${C.cyan}${base}/v1${C.reset}`);
     out(`  ${C.dim}api_key${C.reset}    ${C.green}${key}${C.reset}`);
     out(`  ${C.dim}dashboard${C.reset}  ${C.cyan}${base}/omni#key=${key}${C.reset}`);
+    /*
+     * Claude Code and the Claude desktop app append `/v1/messages` to whatever
+     * base they are given, so they need the bare origin — not the OpenAI base
+     * URL above, which already ends in `/v1`. Printing only that one sent
+     * people straight to `/v1/v1/messages` and a 404 whose only symptom was
+     * "the provider rejected a test request".
+     */
+    out(`  ${C.dim}claude_url${C.reset} ${C.cyan}${base}${C.reset}   ${C.dim}Claude Code / desktop gateway${C.reset}`);
     out(`  ${C.dim}${"─".repeat(58)}${C.reset}`);
     out(
       `  ${C.dim}pool${C.reset}       ${creds.length} credential(s), ${active} active` +

@@ -474,12 +474,25 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
     return Math.max(1, Math.ceil(chars / 3.2));
   };
 
-  app.post("/v1/messages/count_tokens", async (c) => {
+  const countTokens = async (c: Context) => {
     const body = (await c.req.json().catch(() => ({}))) as AnthropicRequest;
     return c.json({ input_tokens: estimateTokens(body) });
-  });
+  };
 
-  app.post("/v1/messages", async (c) => {
+  /*
+   * Both `/v1/...` and `/v1/v1/...` are served.
+   *
+   * These clients append `/v1/messages` to the base URL they are given, and
+   * this gateway's own startup banner advertises `http://host:port/v1` as its
+   * base — the OpenAI-compatible one. Pasting that produces `/v1/v1/messages`
+   * and a 404 whose only symptom is "the provider rejected a test request",
+   * which points at credentials rather than at a URL. Accepting the doubled
+   * prefix costs one extra route and removes the whole class of report.
+   */
+  app.post("/v1/messages/count_tokens", countTokens);
+  app.post("/v1/v1/messages/count_tokens", countTokens);
+
+  const messages = async (c: Context) => {
     const body = (await c.req.json().catch(() => null)) as AnthropicRequest | null;
     if (!body || typeof body !== "object") {
       return anthropicError(c, 400, "invalid_request_error", "Request body must be a JSON object.");
@@ -652,7 +665,10 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
       stop_sequence: null,
       usage: { input_tokens: result.inputTokens, output_tokens: result.outputTokens },
     });
-  });
+  };
+
+  app.post("/v1/messages", messages);
+  app.post("/v1/v1/messages", messages);
 
   return app;
 }

@@ -217,7 +217,7 @@ In the desktop app: **Developer → Configure Third-Party Inference**, set
 Connection to `Gateway`, then:
 
 ```text
-Gateway base URL   http://127.0.0.1:8787
+Gateway base URL   http://127.0.0.1:8787          <- no /v1 on the end
 Gateway API key    your open-auther key (open-auther key show)
 Gateway auth scheme  either — x-api-key and Bearer are both accepted
 ```
@@ -256,6 +256,11 @@ Model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`) reads
 so pooled models under other names will not appear in its `/model` picker. The
 mapping above is what routes them regardless of which name the client picked.
 
+The base URL is the **bare origin**, with no `/v1` — these clients append
+`/v1/messages` themselves. The gateway's startup banner prints both, because
+the OpenAI base URL does end in `/v1` and pasting the wrong one produces
+`/v1/v1/messages`. Both paths are served anyway, so either value works.
+
 ### What is implemented
 
 ```text
@@ -264,6 +269,23 @@ POST /v1/messages/count_tokens  optional; a deliberate overestimate
 GET  /v1/models                 discovery shape
 HEAD /api/hello                 connection warm-up probe
 ```
+
+Each is also served under `/v1/v1/...`, for a base URL that already ends in
+`/v1`.
+
+## Verifying a build
+
+The unit suite checks this project's own bookkeeping. `npm run verify` checks
+what actually crosses the wire, which is where the bugs have been: it boots the
+built CLI against a throwaway data directory and a mock upstream, then asserts
+the payloads the upstream receives and the frames a Claude client gets back.
+
+```bash
+npm run verify
+```
+
+It needs no credentials and touches nothing real. `prepublishOnly` runs it, so
+a release cannot ship without it passing.
 
 Replies stream as Anthropic content blocks, and `ping` frames are emitted
 during silent gaps — the client counts bytes and aborts a stream that goes

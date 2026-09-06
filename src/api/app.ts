@@ -4,7 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { ChatStore } from "../chat/store.js";
 import { buildCatalogue } from "../core/catalogue.js";
 import { CavemanHistory } from "../compress/history.js";
@@ -148,7 +148,7 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
    * hundred models across five providers advertised seven Gemini ids.
    * `auto`, `fast` and `quality` lead the list.
    */
-  app.get("/v1/models", (c) => {
+  const listModels = (c: Context) => {
     const created = Math.floor(Date.now() / 1000);
     const entries = buildCatalogue(store.all(), {
       freeOnly: cfg.freeModelsOnly,
@@ -166,7 +166,16 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
         ...(m.description ? { description: m.description } : {}),
       })),
     });
-  });
+  };
+
+  app.get("/v1/models", listModels);
+  /*
+   * Served at the doubled prefix too: a client given `http://host:port/v1` as
+   * its base appends `/v1/models` and asks for `/v1/v1/models`. The banner
+   * advertises that base for OpenAI clients, so the mistake is easy to make
+   * and its only symptom is a 404 during model discovery.
+   */
+  app.get("/v1/v1/models", listModels);
 
   app.get("/v1/models/:model", (c) => {
     const id = c.req.param("model");
