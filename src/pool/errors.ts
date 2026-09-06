@@ -223,11 +223,31 @@ export function classifyHttp(status: number, body: unknown, rawText?: string): U
     };
   }
 
-  // Auth failures with no terminal code: the token is stale or has been
-  // invalidated server-side. The refresh path decides which; from the router's
-  // point of view this credential is unusable right now.
-  if (status === 401 || status === 403) {
+  // 401 with no terminal code: the token is stale or was invalidated
+  // server-side. The refresh path decides which; from the router's point of
+  // view this credential is unusable right now.
+  if (status === 401) {
     return { kind: "terminal", status, code, message, resetsAt, usageLimited };
+  }
+
+  /*
+   * A bare 403 cools the credential rather than killing it.
+   *
+   * 403 is ambiguous in a way 401 is not: providers use it for a revoked key,
+   * for a model the plan does not include, for a region block, and for a rule
+   * in front of the API that has nothing to do with the credential. The rule
+   * above catches the entitlement wording seen so far, but wording is not
+   * something this project can enumerate for every provider — and when it
+   * guesses wrong the cost is wildly asymmetric. A needless cooldown costs one
+   * credential for `defaultCooldownSeconds`; a needless death costs it until a
+   * human notices and revives it by hand.
+   *
+   * A genuinely revoked key still dies: it either carries one of
+   * `TERMINAL_CODES` or fails its next token refresh, and both paths are
+   * terminal. This only changes the verdict where the evidence is thin.
+   */
+  if (status === 403) {
+    return { kind: "transient", status, code, message, resetsAt, usageLimited };
   }
 
   if (status >= 500) {

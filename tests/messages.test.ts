@@ -157,10 +157,21 @@ describe("a model's entitlement is not the credential's fault", () => {
     expect(failure.modelUnsupported).toBe(true);
   });
 
-  it("still treats a real 403 auth failure as terminal", () => {
-    const failure = classifyHttp(403, { error: { message: "Forbidden: invalid API key" } }, undefined);
-    expect(failure.kind).toBe("terminal");
-    expect(failure.modelUnsupported).toBeUndefined();
+  it("cools rather than kills on a 403 it cannot interpret", () => {
+    /*
+     * Wording cannot be enumerated for every provider, so an unrecognised 403
+     * must not be fatal. A needless cooldown costs minutes; a needless death
+     * costs the account until a human revives it.
+     */
+    const failure = classifyHttp(403, { error: { message: "Forbidden" } }, undefined);
+    expect(failure.kind).toBe("transient");
+  });
+
+  it("still kills a credential a provider says is revoked", () => {
+    expect(classifyHttp(403, { error: { code: "token_revoked", message: "revoked" } }).kind).toBe(
+      "terminal",
+    );
+    expect(classifyHttp(401, { error: { message: "invalid api key" } }).kind).toBe("terminal");
   });
 });
 
