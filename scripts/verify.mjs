@@ -285,6 +285,75 @@ try {
     body?.messages?.some((m) => m.role === "tool" && m.content === "contents"),
   );
 
+  // ------------------------------------------------------------ key policy
+  console.log("\nkey policy");
+  const made = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/keys`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "verify-claude", kind: "claude" }),
+    })
+  ).json();
+  check("a Claude key can be created", made.ok === true && made.key?.kind === "claude");
+  const CK = { "x-api-key": made.key?.key, "content-type": "application/json" };
+
+  const claudeCat = await (
+    await fetch(`http://127.0.0.1:${GW}/v1/models`, { headers: CK })
+  ).json();
+  const claudeIds = (claudeCat.data ?? []).map((m) => m.id);
+  check(
+    "its catalogue is renamed to Claude models",
+    claudeIds.length > 0 && claudeIds.every((i) => i.startsWith("anthropic/claude-")),
+    claudeIds.join(", "),
+  );
+
+  const viaClaude = await fetch(`http://127.0.0.1:${GW}/v1/messages`, {
+    method: "POST",
+    headers: CK,
+    body: JSON.stringify({
+      model: claudeIds[0],
+      max_tokens: 16,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  });
+  check("a Claude name routes to a pooled model", viaClaude.status === 200, `HTTP ${viaClaude.status}`);
+
+  const wrongSurface = await fetch(`http://127.0.0.1:${GW}/v1/chat/completions`, {
+    method: "POST",
+    headers: CK,
+    body: JSON.stringify({ model: "mock-vision", messages: [{ role: "user", content: "hi" }] }),
+  });
+  check(
+    "a Claude key is refused on the OpenAI surface",
+    wrongSurface.status === 403,
+    `HTTP ${wrongSurface.status}`,
+  );
+
+  // Narrow the key to nothing, and confirm the catalogue follows.
+  await fetch(`http://127.0.0.1:${GW}/admin/keys/verify-claude/settings`, {
+    method: "POST",
+    headers: H,
+    body: JSON.stringify({ allowedModels: [] }),
+  });
+  const narrowed = await (
+    await fetch(`http://127.0.0.1:${GW}/v1/models`, { headers: CK })
+  ).json();
+  check("an empty allowlist hides every model", (narrowed.data ?? []).length === 0);
+
+  const probe = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/keys/verify-claude/test-model`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ model: "mock-vision" }),
+    })
+  ).json();
+  check(
+    "the per-model test reports a result",
+    typeof probe.ok === "boolean" && typeof probe.latencyMs === "number",
+    `ok=${probe.ok}`,
+  );
+
   const ct = await (
     await fetch(`http://127.0.0.1:${GW}/v1/messages/count_tokens`, {
       method: "POST",

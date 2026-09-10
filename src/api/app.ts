@@ -19,6 +19,8 @@ import { adminRoutes, buildStatus } from "./admin.js";
 import { gatewayAuth } from "./auth.js";
 import { chatCompletionsHandler } from "./chat.js";
 import { ALIAS_PREFIX, messagesRoutes, registerHelloProbe } from "./messages.js";
+import { ensureAliases } from "../core/key-aliases.js";
+import { CLAUDE_TIERS, keyAllows, tierId } from "../core/keys.js";
 import { errorResponse } from "./errors.js";
 import { LoginSessions } from "./oauth.js";
 import { checkForUpdate } from "../core/update.js";
@@ -131,6 +133,28 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
 
   app.get("/admin/update", async (c) => c.json(await checkForUpdate()));
 
+  /*
+   * A Claude key is scoped to the Anthropic surface.
+   *
+   * Its whole catalogue is synthetic — Claude names standing in for pooled
+   * models — so letting it reach the OpenAI surface would expose the real ids
+   * it was created to hide, and its model policy would not apply. Refusing
+   * here is clearer than a confusing model-not-found further in.
+   */
+  app.use("/v1/chat/completions", async (c, next) => {
+    if (c.get("gatewayKey")?.kind === "claude") {
+      return errorResponse(
+        c,
+        403,
+        "This is a Claude key: it serves /v1/messages only, for Claude Code and the " +
+          "Claude desktop app. Use a standard key for OpenAI-compatible clients.",
+        "invalid_request_error",
+        "wrong_key_kind",
+      );
+    }
+    await next();
+  });
+
   const cavemanHistory = new CavemanHistory(db);
   app.post("/v1/chat/completions", chatCompletionsHandler(cfg, router, store, cavemanHistory));
 
@@ -150,10 +174,46 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
    */
   const listModels = (c: Context) => {
     const created = Math.floor(Date.now() / 1000);
-    const entries = buildCatalogue(store.all(), {
+    const key = c.get("gatewayKey");
+    const all = buildCatalogue(store.all(), {
       freeOnly: cfg.freeModelsOnly,
       includeVirtual: true,
     });
+
+    /*
+     * A Claude key advertises a synthetic catalogue: the pool's models wearing
+     * Claude's own names.
+     *
+     * The desktop app keeps only ids matching `anthropic/claude-*` and drops
+     * everything else, so a pool of Gemini, GPT and Qwen ids is invisible to
+     * it. Renaming is what makes them reachable at all. Real Claude models
+     * from the providers are left out — they are the paid ones that answer
+     * "this premium model requires an active paid plan", and their names are
+     * exactly the names being handed out here.
+     */
+    if (key?.kind === "claude") {
+      const aliases = ensureAliases(cfg, key, all.map((m) => m.id));
+      const rows = Object.entries(aliases)
+        .filter(([, real]) => keyAllows(key, real))
+        .sort(
+          ([a], [b]) =>
+            CLAUDE_TIERS.indexOf(a as never) - CLAUDE_TIERS.indexOf(b as never),
+        );
+
+      return c.json({
+        object: "list",
+        data: rows.map(([tier, real]) => ({
+          id: tierId(tier),
+          object: "model",
+          created,
+          owned_by: "open-auther",
+          display_name: tier,
+          description: `Served by ${real}`,
+        })),
+      });
+    }
+
+    const entries = all.filter((m) => !key || keyAllows(key, m.id));
 
     /*
      * Claude Code keeps a discovered model only when its id contains `claude`

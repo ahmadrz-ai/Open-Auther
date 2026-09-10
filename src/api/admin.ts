@@ -15,12 +15,15 @@ import {
   addGatewayKey,
   removeGatewayKey,
   updateCaveman,
+  updateGatewayKey,
   updateModelCapabilities,
   updateSettings,
   type CavemanConfig,
   type Config,
 } from "../config.js";
 import { capabilitiesFor } from "../core/capabilities.js";
+import { ensureAliases } from "../core/key-aliases.js";
+import { CLAUDE_TIERS, isRealClaudeModel, keyAllows, normaliseKey } from "../core/keys.js";
 import { mergeDiscovered } from "../core/model-metadata.js";
 import { buildCatalogue } from "../core/catalogue.js";
 import { listModels, testConnection } from "../compress/caveman.js";
@@ -361,16 +364,174 @@ export function adminRoutes(
   // ------------------------------------------------------------- keys
 
   app.get("/keys", (c) =>
-    c.json({ keys: cfg.gatewayKeys.map((k) => ({ name: k.name, key: k.key })) }),
+    c.json({
+      keys: cfg.gatewayKeys.map((raw) => {
+        const k = normaliseKey(raw);
+        return {
+          name: k.name,
+          key: k.key,
+          kind: k.kind,
+          allowedModels: k.allowedModels,
+          claudeAliases: k.claudeAliases,
+        };
+      }),
+    }),
   );
 
   app.post("/keys", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { name?: string };
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string; kind?: string };
+    const kind = body.kind === "claude" ? "claude" : "standard";
     try {
-      return c.json({ ok: true, key: addGatewayKey(cfg, String(body.name ?? "")) });
+      return c.json({ ok: true, key: addGatewayKey(cfg, String(body.name ?? ""), kind) });
     } catch (err) {
       return bad(c, err);
     }
+  });
+
+  /**
+   * Everything the API settings page renders for one key: every model the pool
+   * can serve, whether this key may use it, and — for a Claude key — the
+   * Claude name it is presented under.
+   */
+  app.get("/keys/:name/settings", (c) => {
+    const raw = cfg.gatewayKeys.find((k) => k.name === c.req.param("name"));
+    if (!raw) return errorResponse(c, 404, "No such key.", "invalid_request_error", "not_found");
+    const key = normaliseKey(raw);
+
+    const catalogue = buildCatalogue(store.all(), {
+      freeOnly: cfg.freeModelsOnly,
+      includeVirtual: true,
+    });
+    const aliases = key.kind === "claude" ? ensureAliases(cfg, key, catalogue.map((m) => m.id)) : {};
+    const aliasOf = new Map(Object.entries(aliases).map(([tier, real]) => [real, tier]));
+
+    return c.json({
+      key: { name: key.name, kind: key.kind, allowedModels: key.allowedModels },
+      models: catalogue.map((m) => ({
+        id: m.id,
+        providers: m.providers,
+        available: m.available,
+        virtual: m.virtual,
+        allowed: keyAllows(key, m.id),
+        /** The Claude name this model wears for this key, when it has one. */
+        claudeName: aliasOf.get(m.id) ?? null,
+        /** True for real Claude models, which a Claude key never advertises. */
+        hiddenFromClaudeKey: isRealClaudeModel(m.id),
+      })),
+      claudeTiers: CLAUDE_TIERS,
+    });
+  });
+
+  app.post("/keys/:name/settings", async (c) => {
+    const name = c.req.param("name");
+    if (!cfg.gatewayKeys.some((k) => k.name === name)) {
+      return errorResponse(c, 404, "No such key.", "invalid_request_error", "not_found");
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      kind?: string;
+      allowedModels?: unknown;
+      claudeAliases?: unknown;
+    };
+
+    const patch: Parameters<typeof updateGatewayKey>[2] = {};
+    if (body.kind === "claude" || body.kind === "standard") patch.kind = body.kind;
+    if (body.allowedModels === null) patch.allowedModels = null;
+    else if (Array.isArray(body.allowedModels)) {
+      patch.allowedModels = body.allowedModels.map(String).filter(Boolean);
+    }
+    if (body.claudeAliases && typeof body.claudeAliases === "object") {
+      patch.claudeAliases = Object.fromEntries(
+        Object.entries(body.claudeAliases as Record<string, unknown>).map(([k, v]) => [
+          k,
+          String(v),
+        ]),
+      );
+    }
+
+    try {
+      const updated = normaliseKey(updateGatewayKey(cfg, name, patch));
+      return c.json({
+        ok: true,
+        key: {
+          name: updated.name,
+          kind: updated.kind,
+          allowedModels: updated.allowedModels,
+          claudeAliases: updated.claudeAliases,
+        },
+      });
+    } catch (err) {
+      return bad(c, err);
+    }
+  });
+
+  /**
+   * Send one real request to one model and report exactly what came back.
+   *
+   * The upstream's own error text is returned unchanged: "does this model
+   * work" is the question, and a summarised error answers it far less usefully
+   * than the provider's own words about plans, quota or a retired id.
+   */
+  app.post("/keys/:name/test-model", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { model?: string };
+    const model = String(body.model ?? "").trim();
+    if (!model) {
+      return errorResponse(c, 400, "A model is required.", "invalid_request_error", "no_model");
+    }
+
+    const started = Date.now();
+    const outcome = await router.chat(
+      {
+        model,
+        messages: [{ role: "user", content: "Reply with the single word: ok" }],
+        stream: true,
+        max_tokens: 16,
+      },
+      AbortSignal.timeout(60_000),
+    );
+
+    if (!outcome.ok) {
+      return c.json({
+        ok: false,
+        model,
+        latencyMs: Date.now() - started,
+        status: outcome.status,
+        code: outcome.code,
+        error: outcome.message,
+      });
+    }
+
+    let text = "";
+    try {
+      for await (const ev of outcome.events) {
+        if (ev.kind === "text") text += ev.delta;
+        else if (ev.kind === "error") {
+          return c.json({
+            ok: false,
+            model,
+            servedBy: outcome.model,
+            latencyMs: Date.now() - started,
+            status: ev.status,
+            error: JSON.stringify(ev.body).slice(0, 400),
+          });
+        }
+      }
+    } catch (err) {
+      return c.json({
+        ok: false,
+        model,
+        latencyMs: Date.now() - started,
+        error: (err as Error).message,
+      });
+    }
+
+    return c.json({
+      ok: true,
+      model,
+      servedBy: outcome.model,
+      credential: outcome.credential.id,
+      latencyMs: Date.now() - started,
+      reply: text.trim().slice(0, 200),
+    });
   });
 
   app.delete("/keys/:name", (c) => {

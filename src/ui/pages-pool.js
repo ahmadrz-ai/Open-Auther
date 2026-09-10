@@ -742,33 +742,210 @@ export const keys = {
     host.innerHTML = `<div class="page">
       ${card("Gateway keys", "key",
         `<div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>Key</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Kind</th><th>Key</th><th>Models</th><th></th></tr></thead>
           <tbody id="key-rows"></tbody>
         </table></div>
         <div class="note" style="margin-top:12px">${icon("shield", 16)}
           <span>Give each client its own key so one can be revoked without breaking the others.
-          Logs record the key <b>name</b>, never the key.</span></div>`,
+          Logs record the key <b>name</b>, never the key.
+          A <b>Claude</b> key serves <code>/v1/messages</code> only and presents your models
+          under Claude's own names, which is the only way the Claude desktop app will show them.</span></div>`,
         `<button class="btn-sm btn-primary" id="key-new">${icon("add", 15)} Generate key</button>`)}
     </div>`;
 
     const revealed = new Set();
+
+    /**
+     * API settings for one key: which models it may call, and a live test for
+     * each so a model that no longer works can be found and turned off without
+     * leaving the page.
+     */
+    const openSettings = async (name) => {
+      let data;
+      try {
+        data = await get(`/admin/keys/${encodeURIComponent(name)}/settings`);
+      } catch (err) {
+        return toast(err.message, "bad");
+      }
+
+      // `null` means unrestricted. The page works in terms of an explicit set,
+      // and only converts back to null when everything is ticked.
+      const allowed = new Set(
+        data.key.allowedModels === null
+          ? data.models.map((m) => m.id)
+          : data.key.allowedModels,
+      );
+      let kind = data.key.kind;
+
+      const row = (m) => {
+        const hidden = kind === "claude" && m.hiddenFromClaudeKey;
+        return `<tr data-model="${esc(m.id)}" class="${hidden ? "dim" : ""}">
+          <td><input type="checkbox" data-tick="${esc(m.id)}" ${allowed.has(m.id) ? "checked" : ""}
+            ${hidden ? "disabled" : ""}></td>
+          <td><code>${esc(m.id)}</code>${m.virtual ? ` <span class="pill">virtual</span>` : ""}</td>
+          <td class="dim">${m.claudeName ? esc(m.claudeName) : hidden ? "hidden — real Claude model" : ""}</td>
+          <td><span data-result="${esc(m.id)}" class="dim">—</span></td>
+          <td style="text-align:right">
+            <button class="btn-sm" data-test="${esc(m.id)}">${icon("play", 13)} Test</button>
+          </td>
+        </tr>`;
+      };
+
+      await modal({
+        title: `API settings — ${name}`,
+        width: "60rem",
+        body: `
+          <div class="field">
+            <label>Key kind</label>
+            <select id="k-kind">
+              <option value="standard" ${kind === "standard" ? "selected" : ""}>Standard — works with any OpenAI-compatible client</option>
+              <option value="claude" ${kind === "claude" ? "selected" : ""}>Claude — /v1/messages only, models renamed to Claude's</option>
+            </select>
+            <span class="help">A Claude key hides your real model ids and presents them under
+              Claude's own names, which is the only form the Claude desktop app accepts. Real
+              Claude models from your providers are hidden, since those are the paid ones.</span>
+          </div>
+          <div style="display:flex;gap:8px;margin:10px 0">
+            <button class="btn-sm" id="k-all">Select all</button>
+            <button class="btn-sm" id="k-none">Select none</button>
+            <button class="btn-sm" id="k-test-all">${icon("play", 13)} Test every ticked model</button>
+            <span class="dim" id="k-count" style="margin-left:auto;align-self:center"></span>
+          </div>
+          <div class="table-wrap" style="max-height:46vh;overflow:auto">
+            <table><thead><tr>
+              <th style="width:34px"></th><th>Model</th><th>Shown as</th><th>Last test</th><th></th>
+            </tr></thead>
+            <tbody id="k-models">${data.models.map(row).join("")}</tbody></table>
+          </div>`,
+        footer: `<button data-close>Cancel</button><button class="btn-primary" data-save>Save</button>`,
+        onMount: (root, close) => {
+          const countEl = root.querySelector("#k-count");
+          const refreshCount = () => {
+            countEl.textContent = `${allowed.size} of ${data.models.length} enabled`;
+          };
+          refreshCount();
+
+          const bindTicks = () => {
+            root.querySelectorAll("[data-tick]").forEach((cb) =>
+              cb.addEventListener("change", () => {
+                cb.checked ? allowed.add(cb.dataset.tick) : allowed.delete(cb.dataset.tick);
+                refreshCount();
+              }),
+            );
+          };
+          bindTicks();
+
+          root.querySelector("#k-kind").addEventListener("change", (e) => {
+            kind = e.target.value;
+            // Re-render so the "hidden — real Claude model" column and the
+            // disabled rows follow the kind without a save round trip.
+            root.querySelector("#k-models").innerHTML = data.models.map(row).join("");
+            bindTicks();
+            bindTests();
+          });
+
+          root.querySelector("#k-all").addEventListener("click", () => {
+            data.models.forEach((m) => allowed.add(m.id));
+            root.querySelectorAll("[data-tick]").forEach((cb) => (cb.checked = true));
+            refreshCount();
+          });
+          root.querySelector("#k-none").addEventListener("click", () => {
+            allowed.clear();
+            root.querySelectorAll("[data-tick]").forEach((cb) => (cb.checked = false));
+            refreshCount();
+          });
+
+          /** Run one real request and show exactly what came back. */
+          const runTest = async (model) => {
+            const cell = root.querySelector(`[data-result="${CSS.escape(model)}"]`);
+            if (!cell) return;
+            cell.className = "dim";
+            cell.textContent = "testing…";
+            try {
+              const r = await post(`/admin/keys/${encodeURIComponent(name)}/test-model`, { model });
+              if (r.ok) {
+                cell.className = "ok";
+                cell.textContent = `ok · ${r.latencyMs}ms${r.servedBy && r.servedBy !== model ? ` · via ${r.servedBy}` : ""}`;
+                cell.title = r.reply || "";
+              } else {
+                cell.className = "bad";
+                // The provider's own words, not a summary: that is what tells
+                // you whether it is quota, a plan, or a retired model.
+                cell.textContent = r.error || `failed (${r.status ?? "?"})`;
+                cell.title = r.error || "";
+              }
+            } catch (err) {
+              cell.className = "bad";
+              cell.textContent = err.message;
+            }
+          };
+
+          const bindTests = () => {
+            root.querySelectorAll("[data-test]").forEach((b) =>
+              b.addEventListener("click", () => runTest(b.dataset.test)),
+            );
+          };
+          bindTests();
+
+          root.querySelector("#k-test-all").addEventListener("click", async () => {
+            // Sequential: firing every model at once earns a rate limit and
+            // makes the failures impossible to attribute.
+            for (const m of data.models.filter((x) => allowed.has(x.id) && !x.virtual)) {
+              await runTest(m.id);
+            }
+          });
+
+          root.querySelector("[data-save]").addEventListener("click", () =>
+            close({
+              kind,
+              // Everything ticked means "no restriction", which keeps the key
+              // working as models are added to the pool later.
+              allowedModels:
+                allowed.size === data.models.length ? null : [...allowed],
+            }),
+          );
+        },
+      }).then(async (result) => {
+        if (!result) return;
+        try {
+          await post(`/admin/keys/${encodeURIComponent(name)}/settings`, result);
+          toast("API settings saved");
+          render();
+        } catch (err) {
+          toast(err.message, "bad");
+        }
+      });
+    };
 
     const render = async () => {
       const { keys: list } = await get("/admin/keys");
       host.querySelector("#key-rows").innerHTML = list.length
         ? list.map((k) => {
             const shown = revealed.has(k.name);
+            const claude = k.kind === "claude";
+            // `null` means unrestricted, which is not the same as "none".
+            const scope =
+              k.allowedModels === null || k.allowedModels === undefined
+                ? `<span class="dim">all</span>`
+                : `${k.allowedModels.length} selected`;
             return `<tr>
               <td style="font-weight:500">${esc(k.name)}</td>
+              <td><span class="pill ${claude ? "pill-accent" : ""}">${claude ? "Claude" : "standard"}</span></td>
               <td class="secret">${shown ? esc(k.key) : "•".repeat(28)}</td>
+              <td>${scope}</td>
               <td style="text-align:right;white-space:nowrap">
+                <button class="btn-sm" data-settings="${esc(k.name)}" title="API settings">${icon("settings", 14)}</button>
                 <button class="btn-sm" data-reveal="${esc(k.name)}">${icon(shown ? "eyeOff" : "eye", 14)}</button>
                 <button class="btn-sm" data-copy="${esc(k.name)}">${icon("copy", 14)}</button>
                 <button class="btn-sm btn-danger" data-del="${esc(k.name)}">${icon("trash", 14)}</button>
               </td>
             </tr>`;
           }).join("")
-        : emptyRow(3, "No keys configured.");
+        : emptyRow(5, "No keys configured.");
+
+      host.querySelectorAll("[data-settings]").forEach((b) =>
+        b.addEventListener("click", () => openSettings(b.dataset.settings)),
+      );
 
       host.querySelectorAll("[data-reveal]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -802,23 +979,36 @@ export const keys = {
     };
 
     host.querySelector("#key-new").addEventListener("click", async () => {
-      const name = await modal({
+      const made = await modal({
         title: "Generate gateway key",
         body: `<div class="field">
                  <label>Name</label>
                  <input id="kn" placeholder="e.g. cursor" maxlength="40" />
                  <span class="help">A label for the client that will use it.</span>
+               </div>
+               <div class="field">
+                 <label>Kind</label>
+                 <select id="kk">
+                   <option value="standard">Standard — any OpenAI-compatible client</option>
+                   <option value="claude">Claude — /v1/messages only, models renamed to Claude's</option>
+                 </select>
+                 <span class="help">Pick Claude for the Claude desktop app or Claude Code. It hides
+                   your real model ids behind Claude names, which is the only form those clients accept.</span>
                </div>`,
         footer: `<button data-close>Cancel</button><button class="btn-primary" data-save>Generate</button>`,
         onMount: (root, close) => {
-          const save = () => close(root.querySelector("#kn").value);
+          const save = () =>
+            close({
+              name: root.querySelector("#kn").value,
+              kind: root.querySelector("#kk").value,
+            });
           root.querySelector("[data-save]").addEventListener("click", save);
           root.querySelector("#kn").addEventListener("keydown", (e) => e.key === "Enter" && save());
         },
       });
-      if (name === null) return;
+      if (made === null) return;
       try {
-        const res = await post("/admin/keys", { name });
+        const res = await post("/admin/keys", made);
         revealed.add(res.key.name);
         toast("Key generated");
         render();

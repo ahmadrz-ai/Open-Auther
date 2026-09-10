@@ -1259,3 +1259,32 @@ tbody tr:hover { background: rgba(139,63,232,0.045); }
 .about-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid rgba(139,63,232,0.28); border-radius: 14px; color: var(--accent); background: rgba(139,63,232,0.08); }
 .about-name { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
 .about-command { display: block; overflow-x: auto; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); color: var(--text); background: var(--surface-3); font: 11px var(--mono); white-space: nowrap; }
+
+/* ------------------------------------------------- API settings utilities */
+
+/*
+ * Standalone status colours. `.ok` and `.bad` already exist but only as
+ * modifiers on other components (`.tag.ok`, `.feed-dot.bad`), so the API
+ * settings table needs bare ones for its per-model test results.
+ */
+.dim { color: var(--text-faint); }
+td .ok, span.ok { color: var(--ok); }
+td .bad, span.bad { color: var(--bad); }
+
+/* A test result can be a whole provider error, so let it wrap rather than
+   stretching the row off the side of the dialog. */
+[data-result] {
+  display: inline-block;
+  max-width: 22rem;
+  font: 11.5px var(--mono);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pill-accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+
+tr.dim code { opacity: 0.55; }

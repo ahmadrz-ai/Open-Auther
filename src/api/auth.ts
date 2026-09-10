@@ -8,12 +8,15 @@
 
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
-import type { Config, GatewayKey } from "../config.js";
+import type { Config } from "../config.js";
+import { normaliseKey, type GatewayKey } from "../core/keys.js";
 import { errorResponse } from "./errors.js";
 
 declare module "hono" {
   interface ContextVariableMap {
     clientName: string;
+    /** The matched key, so routes can apply its model policy. */
+    gatewayKey: GatewayKey;
   }
 }
 
@@ -81,6 +84,7 @@ export function gatewayAuth(cfg: Config) {
     }
 
     c.set("clientName", key.name);
+    c.set("gatewayKey", normaliseKey(key));
     await next();
   };
 }

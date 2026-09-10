@@ -29,6 +29,8 @@ import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type { Config } from "../config.js";
 import { buildCatalogue } from "../core/catalogue.js";
+import { ensureAliases } from "../core/key-aliases.js";
+import { keyAllows, resolveClaudeAlias } from "../core/keys.js";
 import { createLogger } from "../logging.js";
 import type { CredentialStore } from "../pool/store.js";
 import type { Router } from "../router.js";
@@ -517,16 +519,61 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
       return anthropicError(c, 400, "invalid_request_error", "`messages` is required.");
     }
 
-    const servable = new Set(
-      buildCatalogue(store.all(), { freeOnly: cfg.freeModelsOnly, includeVirtual: true }).map(
-        (m) => m.id,
-      ),
-    );
+    const catalogue = buildCatalogue(store.all(), {
+      freeOnly: cfg.freeModelsOnly,
+      includeVirtual: true,
+    }).map((m) => m.id);
     const requested = String(body.model ?? "").trim();
-    const { model, mapped } = resolveRequestedModel(requested, cfg, servable);
+    const key = c.get("gatewayKey");
+
+    let model: string;
+    let mapped: boolean;
+
+    if (key?.kind === "claude") {
+      /*
+       * A Claude key's catalogue is entirely synthetic, so the name it sends
+       * is one this gateway handed out and must resolve through that key's own
+       * alias map — never through the global mapping, which exists for
+       * standard keys talking to a Claude client.
+       */
+      const aliases = ensureAliases(cfg, key, catalogue);
+      const resolved = resolveClaudeAlias({ ...key, claudeAliases: aliases }, requested);
+      if (!resolved) {
+        return anthropicError(
+          c,
+          404,
+          "invalid_request_error",
+          `This key does not serve "${requested}". Its models are: ` +
+            `${Object.keys(aliases).sort().join(", ") || "none yet — connect a provider first"}.`,
+        );
+      }
+      if (!keyAllows(key, resolved)) {
+        return anthropicError(
+          c,
+          403,
+          "invalid_request_error",
+          `"${requested}" is turned off for this key in its API settings.`,
+        );
+      }
+      model = resolved;
+      mapped = true;
+    } else {
+      const out = resolveRequestedModel(requested, cfg, new Set(catalogue));
+      model = out.model;
+      mapped = out.mapped;
+
+      if (key && !keyAllows(key, model)) {
+        return anthropicError(
+          c,
+          403,
+          "invalid_request_error",
+          `"${model}" is turned off for this key in its API settings.`,
+        );
+      }
+    }
 
     if (mapped) {
-      log.info("anthropic_model_mapped", { requested, served: model });
+      log.info("anthropic_model_mapped", { requested, served: model, key: key?.name ?? null });
     }
 
     const { messages, tools } = fromAnthropicRequest(body, model);

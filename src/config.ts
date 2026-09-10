@@ -12,14 +12,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { registerSecret, type LogLevel } from "./logging.js";
 import { coerceCapabilities, type ModelCapabilities } from "./core/capabilities.js";
+import type { GatewayKey } from "./core/keys.js";
 
 export type RotationStrategy = "fill_first" | "round_robin" | "least_used" | "random";
 
-export interface GatewayKey {
-  /** Human label used in logs. Never the key itself. */
-  name: string;
-  key: string;
-}
+// The key shape lives in core/keys.ts, next to the policy that acts on it.
+export type { GatewayKey, KeyKind } from "./core/keys.js";
 
 /**
  * Caveman connects to any OpenAI-compatible endpoint to summarise oversized
@@ -512,15 +510,58 @@ export function updateModelCapabilities(cfg: Config, model: string, raw: unknown
   persistConfig(cfg, { modelCapabilities: next });
 }
 
-export function addGatewayKey(cfg: Config, name: string): GatewayKey {
+export function addGatewayKey(
+  cfg: Config,
+  name: string,
+  kind: "standard" | "claude" = "standard",
+): GatewayKey {
   const label = name.trim() || `key-${cfg.gatewayKeys.length + 1}`;
   if (cfg.gatewayKeys.some((k) => k.name === label)) {
     throw new Error(`A key named "${label}" already exists.`);
   }
-  const key: GatewayKey = { name: label, key: generateGatewayKey() };
+  const key: GatewayKey = {
+    name: label,
+    key: generateGatewayKey(),
+    kind,
+    // Null rather than an empty list: a new key works with everything until
+    // someone narrows it, which is the least surprising default.
+    allowedModels: null,
+    ...(kind === "claude" ? { claudeAliases: {} } : {}),
+  };
   registerSecret(key.key);
   persistConfig(cfg, { gatewayKeys: [...cfg.gatewayKeys, key] });
   return key;
+}
+
+/**
+ * Replace one key's policy, leaving its name and secret untouched.
+ *
+ * Takes the whole settings object rather than a patch so the Settings page can
+ * send exactly what it renders — a partial update of a checkbox list is
+ * ambiguous about whether an absent model is unticked or merely unmentioned.
+ */
+export function updateGatewayKey(
+  cfg: Config,
+  name: string,
+  patch: {
+    kind?: "standard" | "claude";
+    allowedModels?: string[] | null;
+    claudeAliases?: Record<string, string>;
+  },
+): GatewayKey {
+  const existing = cfg.gatewayKeys.find((k) => k.name === name);
+  if (!existing) throw new Error(`No key named "${name}".`);
+
+  const updated: GatewayKey = {
+    ...existing,
+    ...(patch.kind ? { kind: patch.kind } : {}),
+    ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels } : {}),
+    ...(patch.claudeAliases !== undefined ? { claudeAliases: patch.claudeAliases } : {}),
+  };
+
+  const next = cfg.gatewayKeys.map((k) => (k.name === name ? updated : k));
+  persistConfig(cfg, { gatewayKeys: next });
+  return updated;
 }
 
 export function removeGatewayKey(cfg: Config, name: string): boolean {
