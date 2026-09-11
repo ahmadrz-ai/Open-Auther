@@ -1288,3 +1288,10 @@ td .bad, span.bad { color: var(--bad); }
 }
 
 tr.dim code { opacity: 0.55; }
+
+/* Compact select for the per-row Claude pairing, so a 136-row table still fits. */
+select.mini {
+  font: 11.5px var(--mono);
+  padding: 3px 6px;
+  max-width: 13rem;
+}

@@ -777,13 +777,52 @@ export const keys = {
       );
       let kind = data.key.kind;
 
+      // Assignments start from what the server reported and are edited here.
+      const aliases = {};
+      data.models.forEach((m) => {
+        if (m.claudeName) aliases[m.claudeName] = m.id;
+      });
+
+      /** Which Claude name, if any, this model currently wears. */
+      const tierOf = (id) =>
+        Object.keys(aliases).find((t) => aliases[t] === id) ?? "";
+
       const row = (m) => {
         const hidden = kind === "claude" && m.hiddenFromClaudeKey;
-        return `<tr data-model="${esc(m.id)}" class="${hidden ? "dim" : ""}">
+        const provider = m.servedBy?.length
+          ? [...new Set(m.servedBy.map((s) => s.providerId))].join(", ")
+          : m.providers.join(", ");
+        const conns = (m.servedBy ?? []).map((s) => s.name).join(", ");
+
+        // The pairing dropdown only means anything for a Claude key, and a
+        // real Claude model is never handed out, so it has no pairing to pick.
+        const pairing =
+          kind !== "claude"
+            ? `<span class="dim">—</span>`
+            : hidden
+              ? `<span class="dim">hidden — real Claude model</span>`
+              : `<select class="mini" data-alias="${esc(m.id)}">
+                   <option value="">not shown</option>
+                   ${data.claudeTiers
+                     .map((t) => {
+                       const takenBy = aliases[t];
+                       const mine = takenBy === m.id;
+                       // A name already spoken for is offered but labelled, so
+                       // picking it is a deliberate reassignment, not a surprise.
+                       const label = takenBy && !mine ? `${t} — in use` : t;
+                       return `<option value="${esc(t)}" ${mine ? "selected" : ""}>${esc(label)}</option>`;
+                     })
+                     .join("")}
+                 </select>`;
+
+        return `<tr data-model="${esc(m.id)}" data-provider="${esc(provider)}"
+             data-conns="${esc((m.servedBy ?? []).map((s) => s.id).join(","))}"
+             class="${hidden ? "dim" : ""}">
           <td><input type="checkbox" data-tick="${esc(m.id)}" ${allowed.has(m.id) ? "checked" : ""}
             ${hidden ? "disabled" : ""}></td>
           <td><code>${esc(m.id)}</code>${m.virtual ? ` <span class="pill">virtual</span>` : ""}</td>
-          <td class="dim">${m.claudeName ? esc(m.claudeName) : hidden ? "hidden — real Claude model" : ""}</td>
+          <td class="dim" title="${esc(conns)}">${esc(provider)}</td>
+          <td>${pairing}</td>
           <td><span data-result="${esc(m.id)}" class="dim">—</span></td>
           <td style="text-align:right">
             <button class="btn-sm" data-test="${esc(m.id)}">${icon("play", 13)} Test</button>
@@ -805,15 +844,29 @@ export const keys = {
               Claude's own names, which is the only form the Claude desktop app accepts. Real
               Claude models from your providers are hidden, since those are the paid ones.</span>
           </div>
-          <div style="display:flex;gap:8px;margin:10px 0">
-            <button class="btn-sm" id="k-all">Select all</button>
-            <button class="btn-sm" id="k-none">Select none</button>
-            <button class="btn-sm" id="k-test-all">${icon("play", 13)} Test every ticked model</button>
+          <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">
+            <input id="k-search" placeholder="Search models…" style="flex:1 1 12rem;min-width:10rem" />
+            <select id="k-provider" style="flex:0 0 auto">
+              <option value="">All providers</option>
+              ${data.providers
+                .map(
+                  (p) =>
+                    `<option value="${esc(p.id)}">${esc(p.label)} (${p.connections.length})</option>`,
+                )
+                .join("")}
+            </select>
+            <select id="k-conn" style="flex:0 0 auto" hidden></select>
+          </div>
+          <div style="display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap">
+            <button class="btn-sm" id="k-all">Select all shown</button>
+            <button class="btn-sm" id="k-none">Select none shown</button>
+            <button class="btn-sm" id="k-test-all">${icon("play", 13)} Test shown &amp; ticked</button>
             <span class="dim" id="k-count" style="margin-left:auto;align-self:center"></span>
           </div>
-          <div class="table-wrap" style="max-height:46vh;overflow:auto">
+          <div class="table-wrap" style="max-height:44vh;overflow:auto">
             <table><thead><tr>
-              <th style="width:34px"></th><th>Model</th><th>Shown as</th><th>Last test</th><th></th>
+              <th style="width:34px"></th><th>Model</th><th>Provider</th>
+              <th>Shown as</th><th>Last test</th><th></th>
             </tr></thead>
             <tbody id="k-models">${data.models.map(row).join("")}</tbody></table>
           </div>`,
@@ -821,7 +874,9 @@ export const keys = {
         onMount: (root, close) => {
           const countEl = root.querySelector("#k-count");
           const refreshCount = () => {
-            countEl.textContent = `${allowed.size} of ${data.models.length} enabled`;
+            const shown = [...root.querySelectorAll("#k-models tr")].filter((t) => !t.hidden).length;
+            const filtered = shown !== data.models.length ? ` · ${shown} shown` : "";
+            countEl.textContent = `${allowed.size} of ${data.models.length} enabled${filtered}`;
           };
           refreshCount();
 
@@ -833,25 +888,113 @@ export const keys = {
               }),
             );
           };
-          bindTicks();
 
-          root.querySelector("#k-kind").addEventListener("change", (e) => {
-            kind = e.target.value;
-            // Re-render so the "hidden — real Claude model" column and the
-            // disabled rows follow the kind without a save round trip.
+          /** Reassign a Claude name, freeing whoever held it. */
+          const bindAliases = () => {
+            root.querySelectorAll("[data-alias]").forEach((sel) =>
+              sel.addEventListener("change", () => {
+                const model = sel.dataset.alias;
+                const tier = sel.value;
+                // A model wears at most one name, and a name belongs to at
+                // most one model, so both sides are cleared before assigning.
+                for (const t of Object.keys(aliases)) {
+                  if (aliases[t] === model) delete aliases[t];
+                }
+                if (tier) aliases[tier] = model;
+                redraw();
+              }),
+            );
+          };
+
+          /** Rows currently passing the search and provider filters. */
+          const visibleRows = () =>
+            [...root.querySelectorAll("#k-models tr")].filter((tr) => !tr.hidden);
+
+          const applyFilters = () => {
+            const q = root.querySelector("#k-search").value.trim().toLowerCase();
+            const provider = root.querySelector("#k-provider").value;
+            const conn = root.querySelector("#k-conn").value;
+
+            root.querySelectorAll("#k-models tr").forEach((tr) => {
+              const id = tr.dataset.model.toLowerCase();
+              const byText = !q || id.includes(q);
+              const byProvider = !provider || (tr.dataset.provider ?? "").split(", ").includes(provider);
+              const byConn =
+                !conn || (tr.dataset.conns ?? "").split(",").includes(conn);
+              tr.hidden = !(byText && byProvider && byConn);
+            });
+            refreshCount();
+          };
+
+          /** Redraw the table, preserving the current filters. */
+          const redraw = () => {
             root.querySelector("#k-models").innerHTML = data.models.map(row).join("");
             bindTicks();
             bindTests();
+            bindAliases();
+            applyFilters();
+          };
+
+          bindTicks();
+          bindAliases();
+
+          root.querySelector("#k-kind").addEventListener("change", (e) => {
+            kind = e.target.value;
+            // Redraw so the pairing column and the disabled rows follow the
+            // kind without needing a save round trip.
+            redraw();
           });
 
+          root.querySelector("#k-search").addEventListener("input", applyFilters);
+
+          root.querySelector("#k-provider").addEventListener("change", (e) => {
+            const provider = e.target.value;
+            const connSel = root.querySelector("#k-conn");
+            const chosen = data.providers.find((p) => p.id === provider);
+
+            /*
+             * A second dropdown appears only where it can distinguish
+             * something: several custom endpoints share the provider id
+             * `custom`, so "which connection" is a real question there and
+             * meaningless for a provider holding one account.
+             */
+            if (chosen && chosen.connections.length > 1) {
+              connSel.innerHTML =
+                `<option value="">All ${esc(chosen.label)} connections</option>` +
+                chosen.connections
+                  .map((x) => `<option value="${x.id}">${esc(x.name)}</option>`)
+                  .join("");
+              connSel.hidden = false;
+            } else {
+              connSel.innerHTML = "";
+              connSel.hidden = true;
+            }
+            applyFilters();
+          });
+
+          root.querySelector("#k-conn").addEventListener("change", applyFilters);
+
+          // "Shown" rather than "all": with a filter active, the buttons act on
+          // what you are looking at, which is the only reading that is not a
+          // nasty surprise on a 136-model list.
           root.querySelector("#k-all").addEventListener("click", () => {
-            data.models.forEach((m) => allowed.add(m.id));
-            root.querySelectorAll("[data-tick]").forEach((cb) => (cb.checked = true));
+            visibleRows().forEach((tr) => {
+              const cb = tr.querySelector("[data-tick]");
+              if (cb && !cb.disabled) {
+                cb.checked = true;
+                allowed.add(tr.dataset.model);
+              }
+            });
             refreshCount();
           });
           root.querySelector("#k-none").addEventListener("click", () => {
-            allowed.clear();
-            root.querySelectorAll("[data-tick]").forEach((cb) => (cb.checked = false));
+            visibleRows().forEach((tr) => {
+              const cb = tr.querySelector("[data-tick]");
+              if (cb && !cb.disabled) {
+                cb.checked = false;
+                allowed.delete(tr.dataset.model);
+              }
+            });
             refreshCount();
           });
 
@@ -888,11 +1031,12 @@ export const keys = {
           bindTests();
 
           root.querySelector("#k-test-all").addEventListener("click", async () => {
-            // Sequential: firing every model at once earns a rate limit and
-            // makes the failures impossible to attribute.
-            for (const m of data.models.filter((x) => allowed.has(x.id) && !x.virtual)) {
-              await runTest(m.id);
-            }
+            // Sequential, and only what is on screen: firing 136 models at
+            // once earns a rate limit and makes the failures unattributable.
+            const targets = visibleRows()
+              .map((tr) => tr.dataset.model)
+              .filter((id) => allowed.has(id) && !data.models.find((m) => m.id === id)?.virtual);
+            for (const id of targets) await runTest(id);
           });
 
           root.querySelector("[data-save]").addEventListener("click", () =>
@@ -902,6 +1046,8 @@ export const keys = {
               // working as models are added to the pool later.
               allowedModels:
                 allowed.size === data.models.length ? null : [...allowed],
+              // Only meaningful for a Claude key, and harmless otherwise.
+              claudeAliases: aliases,
             }),
           );
         },

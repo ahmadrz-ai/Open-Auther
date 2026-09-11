@@ -25,11 +25,13 @@ import { capabilitiesFor } from "../core/capabilities.js";
 import { ensureAliases } from "../core/key-aliases.js";
 import { CLAUDE_TIERS, isRealClaudeModel, keyAllows, normaliseKey } from "../core/keys.js";
 import { mergeDiscovered } from "../core/model-metadata.js";
-import { buildCatalogue } from "../core/catalogue.js";
+import { buildCatalogue, isChatModel } from "../core/catalogue.js";
+import { providerDef } from "../core/providers.js";
+import { canServe } from "../pool/selector.js";
 import { listModels, testConnection } from "../compress/caveman.js";
 import type { CavemanHistory } from "../compress/history.js";
 import { now } from "../db.js";
-import { toPublic, type CredentialStore } from "../pool/store.js";
+import { displayName, toPublic, type CredentialStore } from "../pool/store.js";
 import type { PoolEvent } from "../pool/types.js";
 import type { Router } from "../router.js";
 import { errorResponse } from "./errors.js";
@@ -405,6 +407,32 @@ export function adminRoutes(
     const aliases = key.kind === "claude" ? ensureAliases(cfg, key, catalogue.map((m) => m.id)) : {};
     const aliasOf = new Map(Object.entries(aliases).map(([tier, real]) => [real, tier]));
 
+    /*
+     * Which connections serve each model, not just which provider families.
+     *
+     * The distinction matters: `gpt-5.6-luna` comes from a Codex OAuth
+     * connection and works, while `openai/gpt-5.6-luna` comes from a custom
+     * aggregator and is a paid model there. Both are in the list, and without
+     * naming the connection behind each there is no way to tell which is
+     * which — a test failure then reads as "the model is broken" rather than
+     * "that provider charges for it".
+     */
+    const credentials = store.all();
+    const declaredBy = (cred: (typeof credentials)[number]): string[] => {
+      const declared = cred.customModels?.length
+        ? cred.customModels
+        : (providerDef(cred.providerId)?.defaultModels ?? []);
+      return declared.filter((m) => isChatModel(m) && canServe(cred, m));
+    };
+
+    const servers = new Map<string, Array<{ id: number; name: string; providerId: string }>>();
+    for (const cred of credentials) {
+      const entry = { id: cred.id, name: displayName(cred), providerId: cred.providerId };
+      for (const model of declaredBy(cred)) {
+        servers.set(model, [...(servers.get(model) ?? []), entry]);
+      }
+    }
+
     return c.json({
       key: { name: key.name, kind: key.kind, allowedModels: key.allowedModels },
       models: catalogue.map((m) => ({
@@ -417,6 +445,16 @@ export function adminRoutes(
         claudeName: aliasOf.get(m.id) ?? null,
         /** True for real Claude models, which a Claude key never advertises. */
         hiddenFromClaudeKey: isRealClaudeModel(m.id),
+        /** The individual connections that declare it. */
+        servedBy: servers.get(m.id) ?? [],
+      })),
+      /** Provider families present in the pool, for the filter dropdown. */
+      providers: [...new Set(credentials.map((cred) => cred.providerId))].sort().map((id) => ({
+        id,
+        label: providerDef(id)?.label ?? id,
+        connections: credentials
+          .filter((cred) => cred.providerId === id)
+          .map((cred) => ({ id: cred.id, name: displayName(cred) })),
       })),
       claudeTiers: CLAUDE_TIERS,
     });
