@@ -18,6 +18,7 @@ import { providerRoutes } from "./providers.js";
 import { adminRoutes, buildStatus } from "./admin.js";
 import { gatewayAuth } from "./auth.js";
 import { chatCompletionsHandler } from "./chat.js";
+import { responsesHandler } from "./responses.js";
 import { ALIAS_PREFIX, messagesRoutes, registerHelloProbe } from "./messages.js";
 import { ensureAliases } from "../core/key-aliases.js";
 import { CLAUDE_TIERS, keyAllows, tierId } from "../core/keys.js";
@@ -35,7 +36,6 @@ const log = createLogger({ mod: "http" });
  */
 const UNSUPPORTED: Array<{ path: string; method: "get" | "post" | "delete" }> = [
   { path: "/v1/completions", method: "post" },
-  { path: "/v1/responses", method: "post" },
   { path: "/v1/embeddings", method: "post" },
   { path: "/v1/moderations", method: "post" },
   { path: "/v1/images/generations", method: "post" },
@@ -52,8 +52,8 @@ const UNSUPPORTED: Array<{ path: string; method: "get" | "post" | "delete" }> = 
 ];
 
 const UNSUPPORTED_MESSAGE =
-  "This endpoint is not supported. ai-auther routes to the ChatGPT/Codex backend, " +
-  "which serves chat-style completions only. Use /v1/chat/completions.";
+  "This endpoint is not supported. ai-auther serves /v1/chat/completions, and " +
+  "/v1/responses for models on the ChatGPT/Codex backend.";
 
 function uiRoot(): string {
   // dist/api/app.js -> dist/ui
@@ -141,7 +141,7 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
    * it was created to hide, and its model policy would not apply. Refusing
    * here is clearer than a confusing model-not-found further in.
    */
-  app.use("/v1/chat/completions", async (c, next) => {
+  const openAiSurfaceOnly = async (c: Context, next: () => Promise<void>) => {
     if (c.get("gatewayKey")?.kind === "claude") {
       return errorResponse(
         c,
@@ -153,10 +153,13 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
       );
     }
     await next();
-  });
+  };
+  app.use("/v1/chat/completions", openAiSurfaceOnly);
+  app.use("/v1/responses", openAiSurfaceOnly);
 
   const cavemanHistory = new CavemanHistory(db);
   app.post("/v1/chat/completions", chatCompletionsHandler(cfg, router, store, cavemanHistory));
+  app.post("/v1/responses", responsesHandler(cfg, router, store));
 
   /*
    * The Anthropic Messages surface, for Claude Code and the Claude desktop

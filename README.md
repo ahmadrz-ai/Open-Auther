@@ -286,6 +286,30 @@ HEAD /api/hello                 connection warm-up probe
 Each is also served under `/v1/v1/...`, for a base URL that already ends in
 `/v1`.
 
+## Use it from Codex CLI
+
+The gateway serves the **OpenAI Responses API** at `/v1/responses` for models
+on your ChatGPT/Codex connections. That backend speaks Responses natively, so
+requests are relayed as they are: reasoning items, custom tools such as
+`apply_patch`, and the rest of Codex's event stream reach the client unchanged.
+Point Codex CLI, or any other Responses client, at it with a custom model
+provider in `~/.codex/config.toml`:
+
+```toml
+model_provider = "open-auther"
+
+[model_providers.open-auther]
+name = "Open-Auther"
+base_url = "http://127.0.0.1:8787/v1"
+env_key = "OPEN_AUTHER_API_KEY"
+wire_api = "responses"
+```
+
+Rotation, cooldowns and a key's model policy apply as they do on the other
+routes. Models served by other providers answer on `/v1/chat/completions`
+only; asking `/v1/responses` for one returns an error rather than a translated
+reply.
+
 ## Verifying a build
 
 The unit suite checks this project's own bookkeeping. `npm run verify` checks

@@ -23,7 +23,7 @@ import { canServe, selectCredential } from "./pool/selector.js";
 import type { CredentialStore } from "./pool/store.js";
 import type { Credential } from "./pool/types.js";
 import { callCodex, codexEvents } from "./upstream/client.js";
-import { toCodexRequest, type ChatCompletionRequest, type CodexEvent } from "./upstream/translate.js";
+import { toCodexRequest, type ChatCompletionRequest, type CodexEvent, type CodexRequest } from "./upstream/translate.js";
 
 const log = createLogger({ mod: "router" });
 
@@ -48,6 +48,11 @@ export interface RouteFailure {
 }
 
 export type RouteOutcome = RouteSuccess | RouteFailure;
+
+/** A committed upstream call whose body is relayed to the client unchanged. */
+export type RawRouteOutcome =
+  | { ok: true; credential: Credential; model: string; response: Response; attempts: number }
+  | RouteFailure;
 
 /**
  * Does this status mean "that model is wrong" rather than "try again later"?
@@ -903,6 +908,103 @@ export class Router {
       };
     }
     return this.drained(attempts, req.model, opts.providerId ?? null);
+  }
+
+  /**
+   * Route a native Responses request to the Codex backend, which speaks it.
+   *
+   * Only ChatGPT/Codex credentials can serve it, so selection is pinned to that
+   * provider. Unlike `chat`, the answer is committed on the upstream's HTTP
+   * status rather than primed on its first content event: the body is relayed
+   * byte-for-byte so a client like Codex CLI keeps every event type it relies
+   * on (reasoning items, custom tools), which `CodexEvent` cannot represent.
+   *
+   * ponytail: a failure inside an HTTP 200 stream is not failed over; prime on
+   * raw frames if that proves common.
+   */
+  async responses(
+    body: Record<string, unknown> & { model: string },
+    signal: AbortSignal,
+    opts: { tags?: string[] } = {},
+  ): Promise<RawRouteOutcome> {
+    const model = this.resolveAlias(body.model);
+    // The Codex backend only serves streamed, unstored responses.
+    const request = { ...body, model, stream: true, store: false } as unknown as CodexRequest;
+    const tried = new Set<number>();
+    const maxAttempts = Math.max(1, Math.min(this.cfg.maxAttempts, this.store.all().length || 1));
+    let attempts = 0;
+    let lastFailure: UpstreamFailure | null = null;
+
+    while (attempts < maxAttempts && !signal.aborted) {
+      const selected = selectCredential(this.store, this.cfg.rotation, {
+        exclude: tried,
+        model,
+        tags: opts.tags,
+        providerId: "codex",
+      });
+      if (!selected) break;
+      tried.add(selected.id);
+      // Only the ChatGPT OAuth transport posts the body to the Codex backend as-is.
+      if (selected.providerType !== "codex_oauth") continue;
+      attempts += 1;
+
+      let credential: Credential;
+      try {
+        credential = await ensureFreshToken(this.store, this.cfg, selected.id);
+      } catch (err) {
+        if (err instanceof RefreshError) {
+          lastFailure = err.failure;
+          if (err.failure.kind === "transient") this.penalise(selected, err.failure, model);
+          continue;
+        }
+        throw err;
+      }
+
+      const startedAt = Date.now();
+      this.store.markUsed(credential.id);
+      const result = await callCodex(this.cfg, credential, request, signal);
+      if (result.ok) {
+        log.info("routed_responses", { credential: credential.id, attempt: attempts, model });
+        return { ok: true, credential, model, response: result.response, attempts };
+      }
+
+      lastFailure = result.failure;
+      if (result.failure.kind === "client" && result.failure.modelUnsupported) {
+        this.store.setModelStat(credential.id, model, {
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          ts: now(),
+          error: result.failure.code ?? "model_unsupported",
+        });
+        continue;
+      }
+      if (result.failure.kind === "client") {
+        return {
+          ok: false,
+          status: result.failure.status,
+          code: result.failure.code ?? "upstream_client_error",
+          message: result.failure.message,
+          retryAt: null,
+          attempts,
+        };
+      }
+      this.penalise(credential, result.failure, model);
+    }
+
+    if (signal.aborted) {
+      return { ok: false, status: 499, code: "client_disconnected", message: "client aborted the request", retryAt: null, attempts };
+    }
+    if (lastFailure && lastFailure.kind !== "transient" && this.store.available().length > 0) {
+      return {
+        ok: false,
+        status: lastFailure.status || 502,
+        code: lastFailure.code ?? "upstream_error",
+        message: lastFailure.message,
+        retryAt: null,
+        attempts,
+      };
+    }
+    return this.drained(attempts, model, "codex");
   }
 }
 
