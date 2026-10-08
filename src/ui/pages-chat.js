@@ -1,6 +1,6 @@
 /* Chat playground: conversation list, message thread, composer. */
 
-import { compact, confirmDialog, del, esc, get, post, state, toast } from "./core.js";
+import { compact, confirmDialog, del, esc, get, post, screenHero, state, toast } from "./core.js";
 import { icon } from "./icons.js";
 
 /** Capability flag -> icon and label shown under the composer. */
@@ -43,7 +43,8 @@ export const chat = {
 
   mount(host, ctx) {
     host.innerHTML = `
-      <div class="chat-shell">
+       <div class="page chat-page">${screenHero("Workspace / Playground", "Try the pool before your app does.", "Choose a model, send a prompt, and see exactly which connection answers.", "chat")}</div>
+       <div class="chat-shell">
         <aside class="chat-list">
           <div class="chat-list-head">
             <span>Conversations</span>
@@ -142,11 +143,11 @@ export const chat = {
     const renderThread = () => {
       const thread = el("#c-thread");
       if (!current) {
-        thread.innerHTML = `<div class="chat-blank">
-          <h3>Test a model</h3>
-          <p>Start a conversation to check that the pool is serving real replies.
-             Pick <b>Auto</b> to use normal rotation, or pin a specific Auth to prove that one works.</p>
-        </div>`;
+         thread.innerHTML = `<div class="chat-blank"><div class="chat-blank-mark">${icon("spark", 32)}</div>
+           <h3>Test a model</h3>
+           <p>Start a conversation to check that the pool is serving real replies. Pick <b>Auto</b> to use normal rotation, or pin a specific connection to prove that one works.</p>
+           <div class="prompt-grid"><button class="prompt-card" data-prompt="Explain how my model pool routes requests.">Understand routing<span>See the gateway in action</span></button><button class="prompt-card" data-prompt="Give me three ideas for testing an AI gateway.">Test an idea<span>Start with a useful prompt</span></button></div>
+         </div>`;
         return;
       }
       if (messages.length === 0) {
@@ -662,6 +663,13 @@ export const chat = {
     });
 
     host.addEventListener("click", async (e) => {
+      const prompt = e.target.closest("[data-prompt]");
+      if (prompt) {
+        el("#c-input").value = prompt.dataset.prompt;
+        el("#c-input").focus();
+        el("#c-input").dispatchEvent(new Event("input"));
+        return;
+      }
       const delBtn = e.target.closest("[data-delconv]");
       if (delBtn) {
         e.stopPropagation();

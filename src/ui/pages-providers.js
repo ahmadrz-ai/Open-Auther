@@ -6,7 +6,7 @@
  * long scroll where nothing was findable.
  */
 
-import { card, compact, confirmDialog, copy, del, esc, get, modal, post, toast } from "./core.js";
+import { card, compact, confirmDialog, copy, del, esc, get, modal, post, screenHero, toast } from "./core.js";
 import { icon } from "./icons.js";
 
 const PROVIDER_ICON = {
@@ -30,6 +30,7 @@ export const addProvider = {
 
   mount(host, ctx) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Infrastructure / Providers", "Bring your models with you.", "Connect API keys, OAuth accounts, and compatible endpoints. Open-Auther handles the routing from there.", "hub")}
       <div class="prov-toolbar">
         <div class="prov-summary" id="prov-summary"></div>
         <div style="display:flex;gap:8px">

@@ -70,6 +70,7 @@ The project already provides a local OpenAI-compatible gateway with:
 - [x] Add API-key scope and expiration controls to the dashboard.
 - [x] Add a live model explorer with provider and capability filters.
 - [x] Add connection model-health details and troubleshooting actions.
+- [x] Refresh the dashboard visual system and redesign the workspace screens.
 - [ ] Improve Responses API fidelity, structured output, and prompt caching.
 - [ ] Add supported embeddings, audio, files, and batch endpoints where a
       provider adapter can implement them correctly.
