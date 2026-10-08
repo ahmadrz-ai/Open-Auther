@@ -2,7 +2,7 @@
 
 import {
   card, compact, confirmDialog, copy, del, emptyRow, esc, get, modal, num, post,
-  relative, state, stateTag, toast,
+  relative, screenHero, state, stateTag, toast,
 } from "./core.js";
 import { GalaxyGraph } from "./graph.js";
 import { icon } from "./icons.js";
@@ -24,7 +24,7 @@ const EVENT_TEXT = {
 /* ------------------------------------------------------------------ home */
 
 export const home = {
-  title: "Home",
+  title: "Overview",
   subtitle: "Pool topology and live activity",
 
   mount(host, ctx) {
@@ -36,9 +36,9 @@ export const home = {
       <div class="page home-page">
             <section class="home-command">
               <div class="home-command-copy">
-                <div class="eyebrow"><span class="eyebrow-dot"></span> OPEN-AUTHER / CONTROL PLANE</div>
-                <h2>Route with confidence.</h2>
-                <p>One local gateway for provider pools, intelligent rotation, and transparent operations.</p>
+                <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR AI WORKSPACE</div>
+                <h2>A world of models.<br>One seamless gateway.</h2>
+                <p>Connect your providers, explore what’s possible, and keep every request moving. Your entire AI stack, beautifully in sync.</p>
               </div>
               <div class="home-command-side">
                 <div class="command-status">
@@ -47,11 +47,11 @@ export const home = {
                 </div>
                 <div class="command-actions">
                   <a class="btn btn-primary btn-sm" href="#/add">${icon("add", 15)} Add provider</a>
-                  <a class="btn btn-sm" href="#/health">${icon("health", 15)} Inspect health</a>
+                  <a class="btn btn-sm" href="#/chat">${icon("chat", 15)} Open playground</a>
                 </div>
               </div>
             </section>
-            ${card("Get connected", "bolt", `
+            ${card("Your launch checklist", "bolt", `
           <div class="steps">
             <div class="step ${state.key ? "done" : ""}">
               <div class="step-n">1</div>
@@ -63,10 +63,10 @@ export const home = {
             <div class="step ${hasAuths ? "done" : ""}">
               <div class="step-n">2</div>
               <div class="step-body">
-                <h4>Connect an Auth</h4>
+                  <h4>Connect a provider</h4>
                 <p>${hasAuths
-                  ? `${s.summary.total} connected. Add more in <a href="#/add">Add Auth</a>.`
-                  : `Run the Codex OAuth flow in <a href="#/add">Add Auth</a>, or import existing credentials.`}</p>
+                  ? `${s.summary.total} connected. Grow your pool in <a href="#/add">Providers</a>.`
+                  : `Add an API key or sign in through <a href="#/add">Providers</a>.`}</p>
               </div>
             </div>
             <div class="step ${hasAuths ? "done" : ""}">
@@ -154,7 +154,7 @@ export const home = {
       try {
         const data = await get("/admin/providers/status");
         grid.innerHTML = data.providers.map((provider) => `
-          <a class="provider-tile ${esc(provider.health)}" href="#/connections" title="Open connections">
+           <a class="provider-tile ${esc(provider.health)}" href="#/auths" title="Open connections">
             <span class="provider-tile-head"><span class="provider-dot"></span><b>${esc(provider.label)}</b><span class="provider-state">${esc(provider.health)}</span></span>
             <span class="provider-tile-meta"><span>${provider.available}/${provider.configured} ready</span><span>${provider.models.length} models</span></span>
             <span class="provider-tile-track"><i style="width:${provider.configured ? Math.min(100, (provider.available / provider.configured) * 100) : 0}%"></i></span>
@@ -196,6 +196,7 @@ export const auths = {
 
   mount(host, ctx) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Infrastructure / Connections", "Your pool, working together.", "Manage provider accounts, check model health, and keep your gateway ready for the next request.", "hub")}
       ${card("Rotation", "refresh", `
         <div class="note">
           ${icon("shield", 16)}
@@ -768,9 +769,10 @@ export const keys = {
 
   mount(host, ctx) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Workspace / Access", "A key for every workflow.", "Give each client its own access policy. Fine-tune permissions, model access, expiration, and daily budgets.", "key")}
       ${card("Gateway keys", "key",
         `<div class="table-wrap"><table>
-           <thead><tr><th>Name</th><th>Kind</th><th>Key</th><th>Models</th><th>Scopes</th><th>Expires</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Kind</th><th>Key</th><th>Models</th><th>Permissions</th><th>Expiration / limits</th><th></th></tr></thead>
           <tbody id="key-rows"></tbody>
         </table></div>
         <div class="note" style="margin-top:12px">${icon("shield", 16)}
@@ -807,6 +809,13 @@ export const keys = {
       const allScopes = ["inference", "models:read", "logs:read", "settings:write", "admin"];
       const scopes = new Set(data.key.scopes ?? allScopes);
       const expiresAt = data.key.expiresAt ?? null;
+      const maxRequestsPerDay = data.key.maxRequestsPerDay ?? null;
+      const maxTokensPerDay = data.key.maxTokensPerDay ?? null;
+      const maxOutputTokens = data.key.maxOutputTokens ?? null;
+      const expiryLocal = expiresAt ? new Date(expiresAt * 1000) : null;
+      const expiryValue = expiryLocal
+        ? new Date(expiryLocal.getTime() - expiryLocal.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+        : "";
 
       // Assignments start from what the server reported and are edited here.
       const aliases = {};
@@ -875,17 +884,26 @@ export const keys = {
               Claude's own names, which is the only form the Claude desktop app accepts. Real
               Claude models from your providers are hidden, since those are the paid ones.</span>
            </div>
-           <div class="grid-2">
+            <div class="grid-2">
              <div class="field">
                <label>Permissions</label>
                <div class="check-grid" id="k-scopes">
                  ${allScopes.map((scope) => `<label class="check"><input type="checkbox" data-scope="${scope}" ${scopes.has(scope) ? "checked" : ""}> <span>${scope}</span></label>`).join("")}
-               </div>
+            </div>
+            <div class="field">
+              <label>Usage limits</label>
+              <div class="grid-3">
+                <input id="k-requests" type="number" min="0" step="1" placeholder="Requests / UTC day" value="${maxRequestsPerDay ?? ""}" />
+                <input id="k-tokens" type="number" min="0" step="1" placeholder="Tokens / UTC day" value="${maxTokensPerDay ?? ""}" />
+                <input id="k-output" type="number" min="0" step="1" placeholder="Max output tokens" value="${maxOutputTokens ?? ""}" />
+              </div>
+              <span class="help">Blank means unlimited. Daily counters reset at 00:00 UTC; output limits are applied to every inference request.</span>
+            </div>
                <span class="help">Inference is required for model requests. Admin is required for dashboard administration.</span>
              </div>
              <div class="field">
                <label>Expiration</label>
-               <input id="k-expires" type="datetime-local" value="${expiresAt ? new Date(expiresAt * 1000).toISOString().slice(0, 16) : ""}" />
+               <input id="k-expires" type="datetime-local" value="${expiryValue}" />
                <span class="help">Leave blank for a key with no expiration.</span>
              </div>
            </div>
@@ -1098,9 +1116,12 @@ export const keys = {
                // Only meaningful for a Claude key, and harmless otherwise.
                claudeAliases: aliases,
                scopes: [...scopes],
-               expiresAt: root.querySelector("#k-expires").value
-                 ? Math.floor(new Date(root.querySelector("#k-expires").value).getTime() / 1000)
-                 : null,
+                expiresAt: root.querySelector("#k-expires").value
+                  ? Math.floor(new Date(root.querySelector("#k-expires").value).getTime() / 1000)
+                  : null,
+                maxRequestsPerDay: root.querySelector("#k-requests").value === "" ? null : Number(root.querySelector("#k-requests").value),
+                maxTokensPerDay: root.querySelector("#k-tokens").value === "" ? null : Number(root.querySelector("#k-tokens").value),
+                maxOutputTokens: root.querySelector("#k-output").value === "" ? null : Number(root.querySelector("#k-output").value),
             }),
           );
         },
@@ -1128,15 +1149,20 @@ export const keys = {
                 ? `<span class="dim">all</span>`
                 : `${k.allowedModels.length} selected`;
              const scopeNames = (k.scopes ?? []).join(", ");
-             const expires = k.expiresAt ? new Date(k.expiresAt * 1000).toLocaleDateString() : "never";
-             const expired = k.expiresAt && k.expiresAt <= Math.floor(Date.now() / 1000);
+              const expires = k.expiresAt ? new Date(k.expiresAt * 1000).toLocaleDateString() : "never";
+              const expired = k.expiresAt && k.expiresAt <= Math.floor(Date.now() / 1000);
+              const limits = [
+                k.maxRequestsPerDay == null ? null : `${k.maxRequestsPerDay} req/day`,
+                k.maxTokensPerDay == null ? null : `${k.maxTokensPerDay} tok/day`,
+                k.maxOutputTokens == null ? null : `${k.maxOutputTokens} out`,
+              ].filter(Boolean).join(" · ") || "unlimited";
              return `<tr>
               <td style="font-weight:500">${esc(k.name)}</td>
               <td><span class="pill ${claude ? "pill-accent" : ""}">${claude ? "Claude" : "standard"}</span></td>
               <td class="secret">${shown ? esc(k.key) : "•".repeat(28)}</td>
               <td>${scope}</td>
               <td class="dim" title="${esc(scopeNames)}">${esc(scopeNames || "full access")}</td>
-              <td class="${expired ? "bad" : "dim"}">${esc(expires)}</td>
+               <td class="${expired ? "bad" : "dim"}">${esc(expires)}<br><span class="dim">${esc(limits)}</span></td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn-sm" data-settings="${esc(k.name)}" title="API settings">${icon("settings", 14)}</button>
                 <button class="btn-sm" data-reveal="${esc(k.name)}">${icon(shown ? "eyeOff" : "eye", 14)}</button>
@@ -1230,7 +1256,7 @@ export const keys = {
 /* ---------------------------------------------------------------- client */
 
 export const client = {
-  title: "Point Your Client",
+      title: "Client setup",
   subtitle: "Everything an OpenAI-compatible client needs",
 
   mount(host, ctx) {
@@ -1246,12 +1272,14 @@ export const client = {
       </div>`;
 
     host.innerHTML = `<div class="page">
+      ${screenHero("Workspace / Integrations", "Connect once. Create anywhere.", "Copy your gateway details into your favorite tools, or get started with a ready-to-run SDK example.", "link")}
       ${card("Connection", "link", `
         <div class="grid-2">
           <div class="field"><label>Base URL</label>${block("v-base", base)}</div>
           <div class="field"><label>API key</label>${block("v-key", key)}</div>
-        </div>`)}
+          </div>`)}
 
+      <div class="setup-grid">
       ${card("curl", "logs", block("v-curl",
 `curl ${base}/chat/completions \\
   -H "Authorization: Bearer ${key}" \\
@@ -1293,7 +1321,8 @@ OPENAI_API_KEY=${key}`))}
         <div class="note" style="margin-top:12px">${icon("warning", 16)}
           <span>Streaming works, but failover is only transparent before the first token.
           After output starts, a failure ends the stream rather than silently
-          contradicting what you already received.</span></div>`)}
+           contradicting what you already received.</span></div>`)}
+      </div>
 
       ${card("Available models", "hub",
         `<div class="pills">${(s?.gateway.models ?? []).map((m) => `<span class="pill">${esc(m)}</span>`).join("") || "<span class='empty'>None configured.</span>"}</div>`)}

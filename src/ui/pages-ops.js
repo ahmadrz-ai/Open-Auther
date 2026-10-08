@@ -2,7 +2,7 @@
 
 import {
   bytes, card, clock, compact, confirmDialog, dateTime, del, duration, emptyRow, esc, get, num,
-  post, relative, toast,
+  post, relative, screenHero, toast,
 } from "./core.js";
 import { icon } from "./icons.js";
 
@@ -14,6 +14,7 @@ export const models = {
 
   mount(host) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Explore / Models", "Know what you can use.", "Browse the live catalogue, understand capability coverage, and jump straight into a model test.", "bolt")}
       <div class="toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <input id="model-search" placeholder="Search model ids…" style="flex:1 1 16rem" />
         <select id="model-provider" style="width:auto"><option value="">All providers</option></select>
@@ -26,10 +27,7 @@ export const models = {
         <button class="btn-sm" id="model-refresh">${icon("refresh", 14)} Refresh</button>
       </div>
       <div class="grid-4" id="model-summary"></div>
-      ${card("Discovered model catalogue", "bolt", `<div class="table-wrap"><table>
-        <thead><tr><th>Model</th><th>Providers</th><th>Capabilities</th><th>Context</th><th>Availability</th><th></th></tr></thead>
-        <tbody id="model-rows"></tbody>
-      </table></div>`, "", "Facts come from provider discovery where available; unknown means the provider has not published that fact.")}
+       ${card("Discovered model catalogue", "bolt", `<div class="model-grid" id="model-rows"></div>`, "", "Facts come from provider discovery where available; unknown means the provider has not published that fact.")}
     </div>`;
 
     let catalogue = [];
@@ -52,14 +50,13 @@ export const models = {
             const labels = ["vision", "tools", "reasoning"]
               .filter((name) => c[name] === true)
               .map((name) => `<span class="tag active">${name}</span>`).join(" ");
-            return `<tr>
-              <td><code>${esc(m.id)}</code>${m.virtual ? ` <span class="pill">policy</span>` : ""}</td>
-              <td class="dim">${esc(m.providers.join(", ") || "—")}</td>
-              <td>${labels || `<span class="dim">unknown</span>`}</td>
-              <td>${c.contextWindow ? compact(c.contextWindow) : `<span class="dim">unknown</span>`}</td>
-              <td>${m.available ? `<span class="tag active"><i></i>ready</span>` : `<span class="tag cooling"><i></i>unavailable</span>`}</td>
-              <td style="text-align:right"><a class="btn btn-sm" href="#/chat?model=${encodeURIComponent(m.id)}">Open in Chat</a></td>
-            </tr>`;
+             return `<article class="model-tile">
+               <div class="model-tile-top"><span class="model-symbol">${icon(m.virtual ? "spark" : "bolt", 17)}</span>${m.available ? `<span class="tag active"><i></i>ready</span>` : `<span class="tag cooling"><i></i>unavailable</span>`}</div>
+               <h3>${esc(m.id)}</h3>
+               <div class="model-provider">${esc(m.providers.join(", ") || "Policy model")}${m.virtual ? " · virtual policy" : ""}</div>
+               <div class="model-capabilities">${labels || `<span class="dim">Capability data not published</span>`}</div>
+               <div class="model-tile-foot"><span class="model-context"><b>${c.contextWindow ? compact(c.contextWindow) : "—"}</b>context window</span><a class="btn btn-sm" href="#/chat?model=${encodeURIComponent(m.id)}">Try model ↗</a></div>
+             </article>`;
           }).join("")
         : emptyRow(6, "No models match these filters.");
     };
@@ -99,6 +96,7 @@ export const monitor = {
 
   mount(host) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Insights / Monitor", "See the signal in your traffic.", "A calm view of throughput, errors, latency, and where your token budget is going.", "monitor")}
       <div class="pills">
         ${[1, 6, 24, 168].map((h) => `<button class="btn-sm" data-hours="${h}">${h === 168 ? "7 days" : `${h}h`}</button>`).join("")}
       </div>
@@ -199,6 +197,7 @@ export const logs = {
 
   mount(host) {
     host.innerHTML = `<div class="page">
+      ${screenHero("Insights / Logs", "Every request, accounted for.", "Trace what was routed, where it went, and how the gateway responded.", "logs")}
       ${card("Request log", "logs",
         `<div class="table-wrap"><table>
           <thead><tr>
@@ -267,7 +266,7 @@ export const health = {
   subtitle: "Gateway and per-Auth condition",
 
   mount(host) {
-    host.innerHTML = `<div class="page" id="health-body"></div>`;
+    host.innerHTML = `<div class="page" id="health-body">${screenHero("Insights / Health", "Keep the pool ready.", "Spot degraded connections before they become failed requests.", "health")}</div>`;
 
     const render = async () => {
       let h;
@@ -285,7 +284,7 @@ export const health = {
 
       const errPct = (h.gateway.errorRate * 100).toFixed(1);
 
-      host.querySelector("#health-body").innerHTML = `
+      host.querySelector("#health-body").innerHTML = `${screenHero("Insights / Health", "Keep the pool ready.", "Spot degraded connections before they become failed requests.", "health")}
         <div class="note ${statusText[0]}">
           ${icon(statusText[0] === "ok" ? "check" : statusText[0] === "bad" ? "error" : "warning", 16)}
           <span><b>Gateway ${esc(h.gateway.status)}.</b> ${esc(statusText[1])}</span>
@@ -346,7 +345,7 @@ export const runtime = {
   subtitle: "Process, paths and resource use",
 
   mount(host) {
-    host.innerHTML = `<div class="page" id="rt-body"></div>`;
+    host.innerHTML = `<div class="page" id="rt-body">${screenHero("System / Runtime", "Know your local machine.", "Inspect the process, resources, and secure storage locations behind the gateway.", "runtime")}</div>`;
 
     const row = (k, v, mono = true) =>
       `<tr><td style="color:var(--text-dim);width:40%">${esc(k)}</td><td class="${mono ? "mono" : ""}">${esc(v)}</td></tr>`;
@@ -362,7 +361,7 @@ export const runtime = {
       const heapPct = (r.memory.heapUsedBytes / r.memory.heapTotalBytes) * 100;
       const sysPct = ((r.memory.systemTotalBytes - r.memory.systemFreeBytes) / r.memory.systemTotalBytes) * 100;
 
-      host.querySelector("#rt-body").innerHTML = `
+      host.querySelector("#rt-body").innerHTML = `${screenHero("System / Runtime", "Know your local machine.", "Inspect the process, resources, and secure storage locations behind the gateway.", "runtime")}
         <div class="grid-4">
           <div class="stat accent"><div class="stat-value" style="font-size:16px">${esc(duration(r.uptimeSeconds))}</div><div class="stat-label">Uptime</div></div>
           <div class="stat"><div class="stat-value" style="font-size:16px">${esc(r.version)}</div><div class="stat-label">Version</div></div>
@@ -420,6 +419,7 @@ export const caveman = {
      * sides of the exchange; Logs is the failures pulled out on their own.
      */
     host.innerHTML = `
+      <div class="page cv-page">${screenHero("Optimization / Caveman", "Make room for better context.", "Compress long conversations with a model you control, without touching the provider pool.", "compress")}</div>
       <div class="cv-layout">
         <div class="page" id="cv-body"><div class="empty">Loading…</div></div>
         <aside class="cv-side">
@@ -683,7 +683,7 @@ export const settings = {
   subtitle: "Routing behaviour and gateway configuration",
 
   mount(host, ctx) {
-    host.innerHTML = `<div class="page" id="set-body"><div class="empty">Loading…</div></div>`;
+    host.innerHTML = `<div class="page" id="set-body">${screenHero("System / Settings", "Tune the gateway to your work.", "Routing, models, network, and observability settings in one place.", "settings")}<div class="empty">Loading…</div></div>`;
 
     const render = async () => {
       let s;
@@ -700,7 +700,7 @@ export const settings = {
         ["random", "Uniform random. No state, no ordering guarantees."],
       ];
 
-      host.querySelector("#set-body").innerHTML = `
+      host.querySelector("#set-body").innerHTML = `${screenHero("System / Settings", "Tune the gateway to your work.", "Routing, models, network, and observability settings in one place.", "settings")}
         ${card("Rotation", "refresh", `
           <div class="form">
             <div class="field">
@@ -1013,7 +1013,8 @@ export const about = {
       const current = ctx.status?.gateway?.version ?? update.currentVersion;
       const latest = update.latestVersion ?? "Unavailable";
 
-      host.innerHTML = `<div class="page">
+       host.innerHTML = `<div class="page">
+         ${screenHero("System / About", "A small gateway with a big job.", "Release details, update status, and the principles behind Open-Auther.", "spark")}
         <div class="grid-2">
           ${card("Open-Auther", "spark", `
             <div class="about-brand">

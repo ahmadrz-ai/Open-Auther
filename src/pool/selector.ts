@@ -17,6 +17,11 @@ import type { RotationStrategy } from "../config.js";
 /** Models a Google API key can serve. */
 const GOOGLE_MODEL = /^(gemini|gemma|imagen|veo|lyria|nano-banana|aqa|deep-research|antigravity)/i;
 
+/** These transports carry an explicit output-token control to the provider. */
+export function supportsOutputLimit(credential: Credential): boolean {
+  return ["gemini", "openai_custom", "antigravity"].includes(credential.providerType);
+}
+
 /**
  * Can this credential serve this model?
  *
@@ -83,6 +88,7 @@ export interface SelectOptions {
   tags?: string[];
   /** Restrict rotation to one provider id when the dashboard selects it. */
   providerId?: string | null;
+  requireOutputLimit?: boolean;
   at?: number;
   /** Injectable for deterministic tests. */
   random?: () => number;
@@ -104,6 +110,7 @@ export function selectCredential(
     .filter((c) => isAvailable(c, at) && !exclude.has(c.id) && c.accessToken !== null);
 
   if (opts.providerId) pool = pool.filter((c) => c.providerId === opts.providerId);
+  if (opts.requireOutputLimit) pool = pool.filter(supportsOutputLimit);
 
   // Provider affinity, and it fails closed. The previous version only steered
   // `gemini-` models and fell back to the whole pool when no Gemini key was

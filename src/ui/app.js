@@ -12,21 +12,21 @@ import { addProvider } from "./pages-providers.js";
 /* ------------------------------------------------------------------ nav */
 
 const NAV = [
-  { group: "Gateway" },
-  { id: "home", icon: "home", label: "Home", page: pool.home },
-  { id: "chat", icon: "chat", label: "Chat", page: chatPage },
-  { id: "client", icon: "link", label: "Point Your Client", page: pool.client },
+  { group: "Workspace" },
+  { id: "home", icon: "home", label: "Overview", page: pool.home },
+  { id: "chat", icon: "chat", label: "Playground", page: chatPage },
+  { id: "client", icon: "link", label: "Client setup", page: pool.client },
   { id: "keys", icon: "key", label: "API Keys", page: pool.keys },
   { id: "models", icon: "bolt", label: "Models", page: ops.models },
 
-  { group: "Providers & Connections" },
+  { group: "Infrastructure" },
   { id: "auths", icon: "hub", label: "Connections", page: pool.auths, badge: "auths" },
   { id: "add", icon: "personAdd", label: "Add Provider", page: addProvider },
 
-  { group: "Compression" },
+  { group: "Optimization" },
   { id: "caveman", icon: "compress", label: "Caveman", page: ops.caveman },
 
-  { group: "Observability" },
+  { group: "Insights" },
   { id: "monitor", icon: "monitor", label: "Monitor", page: ops.monitor },
   { id: "logs", icon: "logs", label: "Logs", page: ops.logs },
   { id: "health", icon: "health", label: "Health", page: ops.health, badge: "health" },
@@ -38,6 +38,22 @@ const NAV = [
 ];
 
 const ROUTES = Object.fromEntries(NAV.filter((n) => n.id).map((n) => [n.id, n]));
+
+function closeNavigation() {
+  $("app").classList.remove("nav-open");
+  $("nav-scrim").hidden = true;
+  $("nav-toggle").setAttribute("aria-expanded", "false");
+}
+
+$("nav-toggle").addEventListener("click", () => {
+  const open = $("app").classList.toggle("nav-open");
+  $("nav-scrim").hidden = !open;
+  $("nav-toggle").setAttribute("aria-expanded", String(open));
+});
+$("nav-scrim").addEventListener("click", closeNavigation);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeNavigation();
+});
 
 /* ------------------------------------------------------------------ key */
 
@@ -142,6 +158,7 @@ function applyStatus() {
 }
 
 function navigate() {
+  closeNavigation();
   const id = (location.hash.replace(/^#\//, "").split("?")[0] || "home");
   const route = ROUTES[id] ?? ROUTES.home;
 
@@ -153,12 +170,15 @@ function navigate() {
   active = null;
   activeId = route.id;
 
-  document.querySelectorAll(".nav-item").forEach((el) =>
-    el.classList.toggle("active", el.dataset.route === route.id),
-  );
+  document.querySelectorAll(".nav-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.route === route.id);
+    if (el.dataset.route === route.id) el.setAttribute("aria-current", "page");
+    else el.removeAttribute("aria-current");
+  });
 
   $("page-title").textContent = route.page.title;
   $("page-sub").textContent = route.page.subtitle;
+  document.title = `${route.page.title} · Open-Auther`;
 
   const main = $("main");
   main.scrollTop = 0;
@@ -169,6 +189,7 @@ function navigate() {
   // writing into the live DOM using their own captured state.
   const host = document.createElement("div");
   host.className = "page-host";
+  host.dataset.screen = route.id;
   main.replaceChildren(host);
 
   try {

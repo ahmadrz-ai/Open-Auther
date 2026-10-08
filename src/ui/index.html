@@ -5,17 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Open-Auther</title>
 <link rel="stylesheet" href="/assets/styles.css" />
-<link rel="icon" type="image/png" href="/assets/logo.png?v=1.0.1" />
+<link rel="stylesheet" href="/assets/refresh.css" />
+<meta name="theme-color" content="#0c1018" />
+<link rel="icon" type="image/png" href="/assets/logo.png" />
 </head>
 <body>
 
 <!-- Shown until a gateway key is present. -->
 <div id="gate" class="gate" hidden>
   <form class="gate-card" id="gate-form">
-    <h1>Open-Auther</h1>
-    <p>Paste the gateway API key printed when the server started.</p>
-    <input id="gate-key" type="password" placeholder="aia-…" autocomplete="off" spellcheck="false" />
-    <button type="submit" class="btn-primary" style="justify-content:center">Connect</button>
+    <div class="gate-brand"><img src="/assets/logo.png" alt="" width="52" height="52" /><span>Open-Auther<small>YOUR AI CONTROL ROOM</small></span></div>
+    <div class="gate-intro"><span class="eyebrow">LOCAL GATEWAY · GLOBAL MODELS</span><h1>Everything connected.<br>One place to create.</h1><p>Welcome to your workspace. Connect with the gateway key printed in your terminal.</p></div>
+    <label for="gate-key">Gateway API key</label>
+    <input id="gate-key" type="password" placeholder="aia-…" autocomplete="off" spellcheck="false" required />
+    <button type="submit" class="btn-primary gate-connect">Open dashboard <span aria-hidden="true">↗</span></button>
     <p class="gate-error" hidden id="gate-error"></p>
     <p class="gate-hint">
       The CLI prints a dashboard link with the key already in the URL fragment —
@@ -25,32 +28,35 @@
 </div>
 
 <div id="app" hidden>
+  <button id="nav-scrim" class="nav-scrim" aria-label="Close navigation" hidden></button>
 
   <aside class="rail">
     <div class="rail-brand">
-      <img class="rail-logo" src="/assets/logo.png?v=1.0.1" width="30" height="30" alt="Open-Auther" decoding="async" />
-      <span class="rail-title">Open-Auther<span class="rail-version" id="rail-version">v1.0.1</span></span>
+      <img class="rail-logo" src="/assets/logo.png" width="36" height="36" alt="" decoding="async" />
+      <span class="rail-title">Open-Auther<span class="rail-version" id="rail-version">Local AI workspace</span></span>
     </div>
-
-    <nav class="rail-nav" id="rail-nav"></nav>
+    <div class="rail-workspace"><span class="workspace-mark">OA</span><span>Personal workspace<small>Self-hosted gateway</small></span><span class="workspace-dot"></span></div>
+    <nav class="rail-nav" id="rail-nav" aria-label="Dashboard"></nav>
 
     <div class="rail-foot">
+      <div class="rail-foot-label">GATEWAY CONNECTION</div>
       <span class="conn" id="conn" data-state="connecting"><i></i><span>connecting</span></span>
     </div>
   </aside>
 
   <header class="top">
+    <button id="nav-toggle" class="btn-icon mobile-menu" aria-label="Open navigation" aria-controls="rail-nav" aria-expanded="false">☰</button>
     <div class="top-title">
       <h1 id="page-title">Home</h1>
       <p id="page-sub"></p>
     </div>
-    <div class="pills" id="pills"></div>
+    <div class="top-actions"><div class="pills" id="pills" aria-label="Pool status"></div><a href="#/add" class="btn btn-primary top-connect">+ Connect provider</a></div>
   </header>
 
-  <main class="main" id="main"></main>
+  <main class="main" id="main" tabindex="-1"></main>
 </div>
 
-<div class="toasts" id="toasts"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script src="/assets/app.js" type="module"></script>
 </body>

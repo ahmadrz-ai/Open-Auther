@@ -62,6 +62,19 @@ describe("gateway key scopes", () => {
     expect(keyHasScope(key, "admin")).toBe(false);
     expect(key.expiresAt).toBe(123);
   });
+
+  it("normalises optional daily and per-request limits", () => {
+    const key = normaliseKey({
+      name: "limited",
+      key: "secret",
+      maxRequestsPerDay: 10,
+      maxTokensPerDay: 1000,
+      maxOutputTokens: 256,
+    });
+    expect(key.maxRequestsPerDay).toBe(10);
+    expect(key.maxTokensPerDay).toBe(1000);
+    expect(key.maxOutputTokens).toBe(256);
+  });
 });
 
 describe("assigning Claude names to pooled models", () => {

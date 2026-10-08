@@ -61,6 +61,33 @@ export interface GatewayKey {
   scopes?: GatewayScope[];
   /** Epoch seconds after which the key is rejected. Null means no expiry. */
   expiresAt?: number | null;
+  /** Maximum admitted inference requests in the current UTC day. Null means unlimited. */
+  maxRequestsPerDay?: number | null;
+  /** Stop admitting requests once reported usage reaches this UTC-day threshold. */
+  maxTokensPerDay?: number | null;
+  /** Output-token cap sent to supported providers. Null means unlimited. */
+  maxOutputTokens?: number | null;
+}
+
+export const GATEWAY_LIMIT_FIELDS = ["maxRequestsPerDay", "maxTokensPerDay", "maxOutputTokens"] as const;
+export type GatewayLimits = Pick<GatewayKey, (typeof GATEWAY_LIMIT_FIELDS)[number]>;
+
+/** Validate both file configuration and API policy changes without coercion. */
+export function parseGatewayLimits(raw: unknown): GatewayLimits {
+  const limits: GatewayLimits = {};
+  if (!raw || typeof raw !== "object") return limits;
+  const values = raw as Record<string, unknown>;
+  for (const field of GATEWAY_LIMIT_FIELDS) {
+    const value = values[field];
+    if (value === undefined) continue;
+    if (value === null) { limits[field] = null; continue; }
+    const minimum = field === "maxOutputTokens" ? 1 : 0;
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+      throw new Error(`${field} must be null or a safe integer of at least ${minimum}.`);
+    }
+    limits[field] = value;
+  }
+  return limits;
 }
 
 /**
@@ -206,6 +233,7 @@ export function resolveClaudeAlias(key: GatewayKey, requested: string): string |
 
 /** Normalise a key loaded from disk, so older config files keep working. */
 export function normaliseKey(raw: GatewayKey): Required<Pick<GatewayKey, "kind">> & GatewayKey {
+  parseGatewayLimits(raw);
   return {
     ...raw,
     kind: raw.kind === "claude" ? "claude" : "standard",
@@ -213,5 +241,8 @@ export function normaliseKey(raw: GatewayKey): Required<Pick<GatewayKey, "kind">
     claudeAliases: raw.claudeAliases ?? {},
     scopes: raw.scopes ? [...raw.scopes] : [...GATEWAY_SCOPES],
     expiresAt: raw.expiresAt ?? null,
+    maxRequestsPerDay: raw.maxRequestsPerDay ?? null,
+    maxTokensPerDay: raw.maxTokensPerDay ?? null,
+    maxOutputTokens: raw.maxOutputTokens ?? null,
   };
 }

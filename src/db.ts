@@ -11,7 +11,7 @@ import { DatabaseSync } from "./sqlite.js";
 
 export type Database = DatabaseSync;
 
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 const MIGRATIONS: string[] = [
   // v1 — initial schema
@@ -338,6 +338,19 @@ const MIGRATIONS: string[] = [
          cooldown_until = NULL
    WHERE state = 'dead'
      AND last_error IN ('permission_denied', 'model_requires_paid_plan');
+  `,
+
+  // v19 — durable per-gateway-key daily usage counters.
+  // Request logs are intentionally bounded, so security budgets cannot be
+  // calculated from the operational log feed alone.
+  `
+  CREATE TABLE IF NOT EXISTS gateway_usage (
+    client       TEXT NOT NULL,
+    day          INTEGER NOT NULL,
+    requests     INTEGER NOT NULL DEFAULT 0,
+    tokens       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (client, day)
+  );
   `,
 ];
 

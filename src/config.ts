@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { registerSecret, type LogLevel } from "./logging.js";
 import { coerceCapabilities, type ModelCapabilities } from "./core/capabilities.js";
-import type { GatewayKey, GatewayScope, KeyKind } from "./core/keys.js";
+import { parseGatewayLimits, type GatewayKey, type GatewayScope, type KeyKind } from "./core/keys.js";
 
 export type RotationStrategy = "fill_first" | "round_robin" | "least_used" | "random";
 
@@ -416,7 +416,10 @@ export function loadConfig(): Config {
   if (cfg.rateLimitBurst < 1) throw new Error("rateLimitBurst must be at least 1");
 
   // Register every gateway key so it can never appear in a log line.
-  for (const k of cfg.gatewayKeys) registerSecret(k.key);
+  for (const k of cfg.gatewayKeys) {
+    parseGatewayLimits(k);
+    registerSecret(k.key);
+  }
   registerSecret(cfg.caveman.apiKey);
 
   return cfg;
@@ -538,8 +541,15 @@ export function addGatewayKey(
   cfg: Config,
   name: string,
   kind: KeyKind = "standard",
-  options: { scopes?: GatewayScope[]; expiresAt?: number | null } = {},
+  options: {
+    scopes?: GatewayScope[];
+    expiresAt?: number | null;
+    maxRequestsPerDay?: number | null;
+    maxTokensPerDay?: number | null;
+    maxOutputTokens?: number | null;
+  } = {},
 ): GatewayKey {
+  parseGatewayLimits(options);
   const label = name.trim() || `key-${cfg.gatewayKeys.length + 1}`;
   if (cfg.gatewayKeys.some((k) => k.name === label)) {
     throw new Error(`A key named "${label}" already exists.`);
@@ -554,6 +564,9 @@ export function addGatewayKey(
     ...(kind === "claude" ? { claudeAliases: {} } : {}),
     ...(options.scopes ? { scopes: [...options.scopes] } : {}),
     ...(options.expiresAt !== undefined ? { expiresAt: options.expiresAt } : {}),
+    ...(options.maxRequestsPerDay !== undefined ? { maxRequestsPerDay: options.maxRequestsPerDay } : {}),
+    ...(options.maxTokensPerDay !== undefined ? { maxTokensPerDay: options.maxTokensPerDay } : {}),
+    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
   };
   registerSecret(key.key);
   persistConfig(cfg, { gatewayKeys: [...cfg.gatewayKeys, key] });
@@ -576,8 +589,12 @@ export function updateGatewayKey(
     claudeAliases?: Record<string, string>;
     scopes?: GatewayScope[];
     expiresAt?: number | null;
+    maxRequestsPerDay?: number | null;
+    maxTokensPerDay?: number | null;
+    maxOutputTokens?: number | null;
   },
 ): GatewayKey {
+  parseGatewayLimits(patch);
   const existing = cfg.gatewayKeys.find((k) => k.name === name);
   if (!existing) throw new Error(`No key named "${name}".`);
 
@@ -588,6 +605,9 @@ export function updateGatewayKey(
     ...(patch.claudeAliases !== undefined ? { claudeAliases: patch.claudeAliases } : {}),
     ...(patch.scopes !== undefined ? { scopes: [...patch.scopes] } : {}),
     ...(patch.expiresAt !== undefined ? { expiresAt: patch.expiresAt } : {}),
+    ...(patch.maxRequestsPerDay !== undefined ? { maxRequestsPerDay: patch.maxRequestsPerDay } : {}),
+    ...(patch.maxTokensPerDay !== undefined ? { maxTokensPerDay: patch.maxTokensPerDay } : {}),
+    ...(patch.maxOutputTokens !== undefined ? { maxOutputTokens: patch.maxOutputTokens } : {}),
   };
 
   const next = cfg.gatewayKeys.map((k) => (k.name === name ? updated : k));

@@ -28,11 +28,13 @@ import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type { Config } from "../config.js";
+import { now } from "../db.js";
 import { buildCatalogue } from "../core/catalogue.js";
 import { ensureAliases } from "../core/key-aliases.js";
 import { keyAllows, resolveClaudeAlias } from "../core/keys.js";
 import { createLogger } from "../logging.js";
-import type { CredentialStore } from "../pool/store.js";
+import { displayName, type CredentialStore } from "../pool/store.js";
+import type { RequestLogEntry } from "../pool/types.js";
 import type { Router } from "../router.js";
 import type {
   ChatCompletionRequest,
@@ -40,6 +42,7 @@ import type {
   OpenAIMessage,
 } from "../upstream/translate.js";
 import { errorResponse } from "./errors.js";
+import { capOutputTokens, meterGatewayEvents, settleGatewayUsage } from "./budget.js";
 
 const log = createLogger({ mod: "messages" });
 
@@ -578,6 +581,40 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
 
     const { messages, tools } = fromAnthropicRequest(body, model);
     const effort = reasoningEffort(body.thinking);
+    const outputLimit = key?.maxOutputTokens ?? null;
+    try {
+      capOutputTokens(body, ["max_tokens"], outputLimit);
+    } catch (err) {
+      return anthropicError(c, 400, "invalid_request_error", (err as Error).message);
+    }
+    const startedAt = Date.now();
+    const client = c.get("clientName") ?? null;
+    let routeAttempts = 1;
+    const writeLog = (entry: Partial<RequestLogEntry>): void => {
+      store.logRequest({
+        ts: now(),
+        client,
+        credentialId: null,
+        credentialName: null,
+        model,
+        streaming: body.stream !== false,
+        status: null,
+        outcome: "ok",
+        attempts: routeAttempts,
+        latencyMs: Date.now() - startedAt,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        compressed: false,
+        inputBefore: null,
+        inputAfter: null,
+        outputMeasured: null,
+        outputWouldSave: null,
+        errorCode: null,
+        errorMessage: null,
+        ...entry,
+      });
+    };
 
     const request = {
       model,
@@ -594,7 +631,8 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
     const controller = new AbortController();
     c.req.raw.signal?.addEventListener("abort", () => controller.abort(), { once: true });
 
-    const outcome = await router.chat(request, controller.signal);
+    const outcome = await router.chat(request, controller.signal, { requireOutputLimit: outputLimit !== null });
+    routeAttempts = outcome.attempts;
     const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
     if (!outcome.ok) {
@@ -608,12 +646,16 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
             : outcome.status >= 500
               ? "api_error"
               : "invalid_request_error";
+      writeLog({ outcome: "error", status: outcome.status || 502, attempts: outcome.attempts, errorCode: outcome.code, errorMessage: outcome.message });
       return anthropicError(c, outcome.status || 502, type, outcome.message);
     }
+
+    const events = meterGatewayEvents(c, store, outcome.events);
 
     // ----------------------------------------------------------- streaming
     if (body.stream !== false) {
       return streamSSE(c, async (stream) => {
+        try {
         let lastWrite = Date.now();
         /*
          * Writes are chained rather than fired and forgotten.
@@ -661,7 +703,7 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
         });
 
         try {
-          for await (const ev of outcome.events) {
+          for await (const ev of events) {
             if (ev.kind === "text") writer.text(ev.delta);
             else if (ev.kind === "reasoning") writer.thinking(ev.delta);
             else if (ev.kind === "tool_call") {
@@ -694,6 +736,18 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
             type: "error",
             error: { type: "api_error", message: failed.message },
           });
+          writeLog({
+            credentialId: outcome.credential.id,
+            credentialName: displayName(outcome.credential),
+            status: failed.status,
+            outcome: "error",
+            attempts: outcome.attempts,
+            errorCode: "upstream_stream_error",
+            errorMessage: failed.message,
+            promptTokens: inputTokens,
+            completionTokens: outputTokens,
+            totalTokens: inputTokens + outputTokens,
+          });
           await writes;
           return;
         }
@@ -705,18 +759,53 @@ export function messagesRoutes(cfg: Config, store: CredentialStore, router: Rout
           usage: { output_tokens: outputTokens },
         });
         send("message_stop", { type: "message_stop" });
-        void inputTokens;
         // Flush every queued frame before the handler returns, or the
         // response closes with frames still pending.
         await writes;
+        writeLog({
+          credentialId: outcome.credential.id,
+          credentialName: displayName(outcome.credential),
+          status: 200,
+          outcome: outcome.attempts > 1 ? "rotated_ok" : "ok",
+          attempts: outcome.attempts,
+          promptTokens: inputTokens,
+          completionTokens: outputTokens,
+          totalTokens: inputTokens + outputTokens,
+        });
+        } finally {
+          settleGatewayUsage(c, store, null);
+        }
       });
     }
 
     // ------------------------------------------------------- non-streaming
-    const result = await collect(outcome.events);
+    const result = await collect(events);
     if (result.error) {
+      writeLog({
+        credentialId: outcome.credential.id,
+        credentialName: displayName(outcome.credential),
+        status: result.error.status,
+        outcome: "error",
+        attempts: outcome.attempts,
+        errorCode: "upstream_stream_error",
+        errorMessage: result.error.message,
+        promptTokens: result.inputTokens,
+        completionTokens: result.outputTokens,
+        totalTokens: result.inputTokens + result.outputTokens,
+      });
       return anthropicError(c, result.error.status, "api_error", result.error.message);
     }
+
+    writeLog({
+      credentialId: outcome.credential.id,
+      credentialName: displayName(outcome.credential),
+      status: 200,
+      outcome: outcome.attempts > 1 ? "rotated_ok" : "ok",
+      attempts: outcome.attempts,
+      promptTokens: result.inputTokens,
+      completionTokens: result.outputTokens,
+      totalTokens: result.inputTokens + result.outputTokens,
+    });
 
     return c.json({
       id: messageId,

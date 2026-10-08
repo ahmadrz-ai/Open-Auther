@@ -240,3 +240,11 @@ export function card(title, iconName, inner, actions = "", sub = "") {
       ${inner}
     </section>`;
 }
+
+export function screenHero(kicker, title, description, iconName, actions = "") {
+  return `<section class="screen-hero">
+    <div class="screen-hero-copy"><span class="eyebrow">${esc(kicker)}</span><h2>${esc(title)}</h2><p>${esc(description)}</p>
+      ${actions ? `<div class="screen-actions">${actions}</div>` : ""}</div>
+    <div class="screen-emblem" aria-hidden="true">${icon(iconName, 32)}</div>
+  </section>`;
+}

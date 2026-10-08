@@ -31,7 +31,7 @@ The project already provides a local OpenAI-compatible gateway with:
 - [ ] Hash gateway keys at rest and support one-time key display.
 - [x] Add key scopes, expiration, revocation, and per-key model policies.
 - [x] Add per-key and per-IP rate limiting.
-- [ ] Add configurable request budgets and maximum token limits.
+- [x] Add configurable per-key daily request/token budgets and maximum output limits.
 - [ ] Add encrypted credential backup and restore.
 - [ ] Add optional OS-keychain or envelope encryption for OAuth tokens.
 - [ ] Add secure custom-endpoint/SSRF policy controls.
@@ -70,6 +70,7 @@ The project already provides a local OpenAI-compatible gateway with:
 - [x] Add API-key scope and expiration controls to the dashboard.
 - [x] Add a live model explorer with provider and capability filters.
 - [x] Add connection model-health details and troubleshooting actions.
+- [x] Refresh the dashboard visual system and redesign the workspace screens.
 - [ ] Improve Responses API fidelity, structured output, and prompt caching.
 - [ ] Add supported embeddings, audio, files, and batch endpoints where a
       provider adapter can implement them correctly.
