@@ -394,6 +394,27 @@ try {
   });
   check("expired keys are rejected", expiredRes.status === 401, `HTTP ${expiredRes.status}`);
 
+  const budget = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/keys`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "verify-budget", maxRequestsPerDay: 1, maxOutputTokens: 5 }),
+    })
+  ).json();
+  check("new keys persist usage limits", budget.key?.maxRequestsPerDay === 1 && budget.key?.maxOutputTokens === 5);
+  const BK = { authorization: `Bearer ${budget.key?.key}`, "content-type": "application/json" };
+  const budgetFirst = await fetch(`http://127.0.0.1:${GW}/v1/chat/completions`, {
+    method: "POST", headers: BK,
+    body: JSON.stringify({ model: "mock-vision", stream: false, messages: [{ role: "user", content: "budget" }] }),
+  });
+  check("output limits reach the upstream", received.at(-1)?.max_tokens === 5, `max_tokens=${received.at(-1)?.max_tokens}`);
+  const budgetSecond = await fetch(`http://127.0.0.1:${GW}/v1/chat/completions`, {
+    method: "POST", headers: BK,
+    body: JSON.stringify({ model: "mock-vision", stream: false, messages: [{ role: "user", content: "budget again" }] }),
+  });
+  check("daily request budgets reject the next request", budgetFirst.status === 200 && budgetSecond.status === 429 &&
+    (await budgetSecond.json()).error?.code === "request_budget_exceeded", `HTTP ${budgetSecond.status}`);
+
   const ct = await (
     await fetch(`http://127.0.0.1:${GW}/v1/messages/count_tokens`, {
       method: "POST",

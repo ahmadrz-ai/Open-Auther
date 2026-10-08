@@ -19,7 +19,7 @@ import { capabilitiesFor, meetsRequirements, requirementsForRequest, type Capabi
 import { lookupModel, mergeDiscovered, type DiscoveredModel } from "./core/model-metadata.js";
 import { isVirtualModel, orderCandidates, type Candidate, type VirtualModel } from "./core/virtual.js";
 import type { UpstreamFailure } from "./pool/errors.js";
-import { canServe, selectCredential } from "./pool/selector.js";
+import { canServe, selectCredential, supportsOutputLimit } from "./pool/selector.js";
 import type { CredentialStore } from "./pool/store.js";
 import type { Credential } from "./pool/types.js";
 import { callCodex, codexEvents } from "./upstream/client.js";
@@ -285,12 +285,13 @@ export class Router {
     virtual: VirtualModel,
     req: ChatCompletionRequest,
     signal: AbortSignal,
-    opts: { tags?: string[]; sticky?: string | null; providerId?: string | null },
+    opts: { tags?: string[]; sticky?: string | null; providerId?: string | null; requireOutputLimit?: boolean },
   ): Promise<RouteOutcome> {
     const requirements = requirementsForRequest(req);
     const ordered = orderCandidates(
       virtual,
-      this.candidatePairs(opts.tags, requirements, opts.providerId ?? null),
+      this.candidatePairs(opts.tags, requirements, opts.providerId ?? null)
+        .filter((pair) => !opts.requireOutputLimit || supportsOutputLimit(pair.credential)),
       this.cfg.modelCapabilities,
       opts.sticky ?? null,
     );
@@ -321,7 +322,9 @@ export class Router {
       if (signal.aborted || tried >= budget) break;
       tried += 1;
 
-      const outcome = await this.chat({ ...req, model }, signal, { tags: opts.tags });
+      const outcome = await this.chat({ ...req, model }, signal, {
+        tags: opts.tags, providerId: opts.providerId, requireOutputLimit: opts.requireOutputLimit,
+      });
       if (outcome.ok) {
         log.info("virtual_resolved", { virtual, model, tried });
         return outcome;
@@ -545,6 +548,8 @@ export class Router {
       tags?: string[];
       sticky?: string | null;
       providerId?: string | null;
+      /** Gateway policy: never select a transport that drops output controls. */
+      requireOutputLimit?: boolean;
       /** Internal: set on the one retry after a provider retires a model. */
       noRetireRetry?: boolean;
     } = {},
@@ -614,6 +619,17 @@ export class Router {
       };
     }
 
+    if (opts.requireOutputLimit && (pinned !== null
+      ? !supportsOutputLimit(this.store.get(pinned)!)
+      : !this.store.all().some((credential) => supportsOutputLimit(credential)
+        && canServe(credential, body.model) && (!opts.providerId || credential.providerId === opts.providerId)))) {
+      return {
+        ok: false, status: 400, code: "output_limit_unsupported",
+        message: "No eligible transport supports this key's output-token limit. Use an API-key or Antigravity connection.",
+        retryAt: null, attempts: 0,
+      };
+    }
+
     while (attempts < maxAttempts) {
       if (signal.aborted) {
         return {
@@ -637,6 +653,7 @@ export class Router {
               model: body.model,
               tags: opts.tags,
               providerId: opts.providerId ?? null,
+              requireOutputLimit: opts.requireOutputLimit,
             });
       if (!selected) break;
 

@@ -29,6 +29,7 @@ import { displayName, toPublic, type CredentialStore } from "../pool/store.js";
 import type { Router } from "../router.js";
 import type { OpenAIMessage } from "../upstream/translate.js";
 import { errorResponse } from "./errors.js";
+import { capOutputTokens, deferGatewayUsage, settleGatewayUsage } from "./budget.js";
 
 const log = createLogger({ mod: "chatui" });
 
@@ -347,6 +348,9 @@ export function chatUiRoutes(
       );
     }
 
+    const gatewayKey = c.get("gatewayKey");
+    const outputLimit = gatewayKey?.maxOutputTokens ?? null;
+
     chat.addMessage({ conversationId: id, role: "user", content, attachments });
     chat.autoTitle(id, content || attachments[0]?.name || "Image");
 
@@ -378,6 +382,7 @@ export function chatUiRoutes(
     c.req.raw.signal?.addEventListener("abort", () => controller.abort(), { once: true });
     const started = Date.now();
 
+    deferGatewayUsage(c);
     return streamSSE(c, async (stream) => {
       const fail = async (message: string, code: string, detail?: unknown) => {
         chat.addMessage({
@@ -387,16 +392,18 @@ export function chatUiRoutes(
           error: message,
           latencyMs: Date.now() - started,
         });
+        settleGatewayUsage(c, store, null);
         await stream.writeSSE({ event: "error", data: JSON.stringify({ message, code, detail }) });
       };
 
       let outcome;
       try {
-        outcome = await router.chat(
-          {
-            model,
-            messages: history,
-            stream: true,
+          outcome = await router.chat(
+            {
+              model,
+              messages: history,
+              stream: true,
+              ...(outputLimit === null ? {} : { max_tokens: outputLimit }),
             reasoning_effort: capabilitiesFor(
               model,
               cfg.modelCapabilities,
@@ -406,7 +413,11 @@ export function chatUiRoutes(
               : undefined,
           },
           controller.signal,
-          { pinnedCredentialId: conversation.pinnedCredentialId, providerId: conversation.providerId },
+            {
+              pinnedCredentialId: conversation.pinnedCredentialId,
+              providerId: conversation.providerId,
+              requireOutputLimit: outputLimit !== null,
+            },
         );
       } catch (err) {
         return void (await fail((err as Error).message, "router_failed"));
@@ -470,6 +481,7 @@ export function chatUiRoutes(
         error: broke ? "Stream ended early" : null,
       });
       store.markSuccess(outcome.credential.id, tokens);
+      settleGatewayUsage(c, store, tokens);
 
       await stream.writeSSE({
         event: broke ? "error" : "done",

@@ -27,6 +27,7 @@ import { LoginSessions } from "./oauth.js";
 import { checkForUpdate } from "../core/update.js";
 import { requestIdMiddleware, requestSizeLimit } from "./request.js";
 import { rateLimitMiddleware } from "./limits.js";
+import { budgetMiddleware } from "./budget.js";
 
 const log = createLogger({ mod: "http" });
 
@@ -139,6 +140,9 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
   app.use("/admin/*", gatewayAuth(cfg));
   app.use("/v1/*", rateLimitMiddleware(cfg));
   app.use("/admin/*", rateLimitMiddleware(cfg));
+  const budgets = budgetMiddleware(store);
+  app.use("/v1/*", budgets);
+  app.use("/admin/chat/*", budgets);
 
   app.get("/admin/update", async (c) => c.json(await checkForUpdate()));
 

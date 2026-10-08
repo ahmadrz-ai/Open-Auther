@@ -22,6 +22,7 @@ import {
   type Usage,
 } from "../upstream/translate.js";
 import { errorResponse } from "./errors.js";
+import { capOutputTokens, meterGatewayEvents, settleGatewayUsage } from "./budget.js";
 
 const log = createLogger({ mod: "chat" });
 
@@ -65,6 +66,12 @@ export function chatCompletionsHandler(
       return errorResponse(c, 400, parsed.message, "invalid_request_error", "invalid_parameter");
     }
     const req = parsed.req;
+    const outputLimit = c.get("gatewayKey")?.maxOutputTokens ?? null;
+    try {
+      capOutputTokens(req, ["max_tokens", "max_completion_tokens"], outputLimit);
+    } catch (err) {
+      return errorResponse(c, 400, (err as Error).message, "invalid_request_error", "invalid_parameter");
+    }
     const startedAt = Date.now();
     const client = c.get("clientName") ?? null;
 
@@ -119,7 +126,7 @@ export function chatCompletionsHandler(
       .map((t) => t.trim())
       .filter(Boolean);
 
-    const outcome = await router.chat(req, controller.signal, tags.length ? { tags } : {});
+    const outcome = await router.chat(req, controller.signal, { tags, requireOutputLimit: outputLimit !== null });
 
     if (!outcome.ok) {
       clearTimeout(timeout);
@@ -151,7 +158,8 @@ export function chatCompletionsHandler(
       return errorResponse(c, outcome.status, outcome.message, type, outcome.code, headers);
     }
 
-    const { credential, events } = outcome;
+    const { credential } = outcome;
+    const events = meterGatewayEvents(c, store, outcome.events);
     const id = newCompletionId();
     const created = Math.floor(Date.now() / 1000);
     const model = req.model;
@@ -165,6 +173,7 @@ export function chatCompletionsHandler(
     // ------------------------------------------------------------ streaming
     if (req.stream) {
       return streamSSE(c, async (stream) => {
+        try {
         let usage: Usage = EMPTY_USAGE;
         let finish: FinishReason = "stop";
         let sawToolCall = false;
@@ -276,6 +285,10 @@ export function chatCompletionsHandler(
             }),
           });
           await stream.writeSSE({ data: "[DONE]" });
+        }
+        } finally {
+          clearTimeout(timeout);
+          settleGatewayUsage(c, store, null);
         }
       });
     }

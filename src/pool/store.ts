@@ -912,6 +912,57 @@ export class CredentialStore extends EventEmitter {
     }));
   }
 
+  /** Atomically reserve one request in a client's daily budget. */
+  consumeGatewayRequest(
+    client: string,
+    day: number,
+    limit: number | null,
+    tokenLimit: number | null = null,
+  ): { allowed: boolean; requests: number; tokens: number; reason?: "requests" | "tokens" } {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.db
+        .prepare("SELECT requests, tokens FROM gateway_usage WHERE client = ? AND day = ?")
+        .get(client, day) as { requests?: number; tokens?: number } | undefined;
+      const requests = Number(existing?.requests ?? 0);
+      const tokens = Number(existing?.tokens ?? 0);
+      if (limit !== null && requests >= limit) {
+        this.db.exec("ROLLBACK");
+        return { allowed: false, requests, tokens, reason: "requests" };
+      }
+      if (tokenLimit !== null && tokens >= tokenLimit) {
+        this.db.exec("ROLLBACK");
+        return { allowed: false, requests, tokens, reason: "tokens" };
+      }
+      if (existing) {
+        this.db.prepare("UPDATE gateway_usage SET requests = requests + 1 WHERE client = ? AND day = ?").run(client, day);
+      } else {
+        this.db.prepare("INSERT INTO gateway_usage (client, day, requests, tokens) VALUES (?, ?, 1, 0)").run(client, day);
+      }
+      this.db.exec("COMMIT");
+      return { allowed: true, requests: requests + 1, tokens };
+    } catch (err) {
+      try { this.db.exec("ROLLBACK"); } catch { /* preserve the original error */ }
+      throw err;
+    }
+  }
+
+  /** Add completed usage to the durable daily counter. */
+  addGatewayTokens(client: string, day: number, tokens: number): void {
+    if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error("Invalid gateway token usage.");
+    if (tokens === 0) return;
+    this.db.prepare(
+      `INSERT INTO gateway_usage (client, day, requests, tokens) VALUES (?, ?, 0, ?)
+       ON CONFLICT(client, day) DO UPDATE SET tokens = tokens + excluded.tokens`,
+    ).run(client, day, Math.max(0, Math.floor(tokens)));
+  }
+
+  gatewayUsage(client: string, day: number): { requests: number; tokens: number } {
+    const row = this.db.prepare("SELECT requests, tokens FROM gateway_usage WHERE client = ? AND day = ?").get(client, day) as
+      { requests?: number; tokens?: number } | undefined;
+    return { requests: Number(row?.requests ?? 0), tokens: Number(row?.tokens ?? 0) };
+  }
+
   /** Aggregates for the Monitor page. `since` is an epoch second. */
   stats(since: number): {
     requests: number;

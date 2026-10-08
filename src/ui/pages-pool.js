@@ -807,6 +807,9 @@ export const keys = {
       const allScopes = ["inference", "models:read", "logs:read", "settings:write", "admin"];
       const scopes = new Set(data.key.scopes ?? allScopes);
       const expiresAt = data.key.expiresAt ?? null;
+      const maxRequestsPerDay = data.key.maxRequestsPerDay ?? null;
+      const maxTokensPerDay = data.key.maxTokensPerDay ?? null;
+      const maxOutputTokens = data.key.maxOutputTokens ?? null;
 
       // Assignments start from what the server reported and are edited here.
       const aliases = {};
@@ -875,12 +878,21 @@ export const keys = {
               Claude's own names, which is the only form the Claude desktop app accepts. Real
               Claude models from your providers are hidden, since those are the paid ones.</span>
            </div>
-           <div class="grid-2">
+            <div class="grid-2">
              <div class="field">
                <label>Permissions</label>
                <div class="check-grid" id="k-scopes">
                  ${allScopes.map((scope) => `<label class="check"><input type="checkbox" data-scope="${scope}" ${scopes.has(scope) ? "checked" : ""}> <span>${scope}</span></label>`).join("")}
-               </div>
+            </div>
+            <div class="field">
+              <label>Usage limits</label>
+              <div class="grid-3">
+                <input id="k-requests" type="number" min="0" step="1" placeholder="Requests / UTC day" value="${maxRequestsPerDay ?? ""}" />
+                <input id="k-tokens" type="number" min="0" step="1" placeholder="Tokens / UTC day" value="${maxTokensPerDay ?? ""}" />
+                <input id="k-output" type="number" min="0" step="1" placeholder="Max output tokens" value="${maxOutputTokens ?? ""}" />
+              </div>
+              <span class="help">Blank means unlimited. Daily counters reset at 00:00 UTC; output limits are applied to every inference request.</span>
+            </div>
                <span class="help">Inference is required for model requests. Admin is required for dashboard administration.</span>
              </div>
              <div class="field">
@@ -1098,9 +1110,12 @@ export const keys = {
                // Only meaningful for a Claude key, and harmless otherwise.
                claudeAliases: aliases,
                scopes: [...scopes],
-               expiresAt: root.querySelector("#k-expires").value
-                 ? Math.floor(new Date(root.querySelector("#k-expires").value).getTime() / 1000)
-                 : null,
+                expiresAt: root.querySelector("#k-expires").value
+                  ? Math.floor(new Date(root.querySelector("#k-expires").value).getTime() / 1000)
+                  : null,
+                maxRequestsPerDay: root.querySelector("#k-requests").value === "" ? null : Number(root.querySelector("#k-requests").value),
+                maxTokensPerDay: root.querySelector("#k-tokens").value === "" ? null : Number(root.querySelector("#k-tokens").value),
+                maxOutputTokens: root.querySelector("#k-output").value === "" ? null : Number(root.querySelector("#k-output").value),
             }),
           );
         },
@@ -1128,15 +1143,20 @@ export const keys = {
                 ? `<span class="dim">all</span>`
                 : `${k.allowedModels.length} selected`;
              const scopeNames = (k.scopes ?? []).join(", ");
-             const expires = k.expiresAt ? new Date(k.expiresAt * 1000).toLocaleDateString() : "never";
-             const expired = k.expiresAt && k.expiresAt <= Math.floor(Date.now() / 1000);
+              const expires = k.expiresAt ? new Date(k.expiresAt * 1000).toLocaleDateString() : "never";
+              const expired = k.expiresAt && k.expiresAt <= Math.floor(Date.now() / 1000);
+              const limits = [
+                k.maxRequestsPerDay == null ? null : `${k.maxRequestsPerDay} req/day`,
+                k.maxTokensPerDay == null ? null : `${k.maxTokensPerDay} tok/day`,
+                k.maxOutputTokens == null ? null : `${k.maxOutputTokens} out`,
+              ].filter(Boolean).join(" · ") || "unlimited";
              return `<tr>
               <td style="font-weight:500">${esc(k.name)}</td>
               <td><span class="pill ${claude ? "pill-accent" : ""}">${claude ? "Claude" : "standard"}</span></td>
               <td class="secret">${shown ? esc(k.key) : "•".repeat(28)}</td>
               <td>${scope}</td>
               <td class="dim" title="${esc(scopeNames)}">${esc(scopeNames || "full access")}</td>
-              <td class="${expired ? "bad" : "dim"}">${esc(expires)}</td>
+               <td class="${expired ? "bad" : "dim"}">${esc(expires)}<br><span class="dim">${esc(limits)}</span></td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn-sm" data-settings="${esc(k.name)}" title="API settings">${icon("settings", 14)}</button>
                 <button class="btn-sm" data-reveal="${esc(k.name)}">${icon(shown ? "eyeOff" : "eye", 14)}</button>

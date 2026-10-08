@@ -28,6 +28,7 @@ import {
   isRealClaudeModel,
   keyAllows,
   normaliseKey,
+  parseGatewayLimits,
   type GatewayScope,
 } from "../core/keys.js";
 import { mergeDiscovered } from "../core/model-metadata.js";
@@ -383,6 +384,9 @@ export function adminRoutes(
           claudeAliases: k.claudeAliases,
           scopes: k.scopes,
           expiresAt: k.expiresAt,
+          maxRequestsPerDay: k.maxRequestsPerDay,
+          maxTokensPerDay: k.maxTokensPerDay,
+          maxOutputTokens: k.maxOutputTokens,
         };
       }),
     }),
@@ -394,6 +398,9 @@ export function adminRoutes(
       kind?: string;
       scopes?: unknown;
       expiresAt?: unknown;
+      maxRequestsPerDay?: unknown;
+      maxTokensPerDay?: unknown;
+      maxOutputTokens?: unknown;
     };
     const kind = body.kind === "claude" ? "claude" : "standard";
     const scopes = Array.isArray(body.scopes)
@@ -411,7 +418,11 @@ export function adminRoutes(
     try {
       return c.json({
         ok: true,
-        key: addGatewayKey(cfg, String(body.name ?? ""), kind, { scopes, expiresAt }),
+        key: addGatewayKey(cfg, String(body.name ?? ""), kind, {
+          scopes,
+          expiresAt,
+          ...parseGatewayLimits(body),
+        }),
       });
     } catch (err) {
       return bad(c, err);
@@ -468,6 +479,9 @@ export function adminRoutes(
         allowedModels: key.allowedModels,
         scopes: key.scopes,
         expiresAt: key.expiresAt,
+        maxRequestsPerDay: key.maxRequestsPerDay,
+        maxTokensPerDay: key.maxTokensPerDay,
+        maxOutputTokens: key.maxOutputTokens,
       },
       models: catalogue.map((m) => ({
         id: m.id,
@@ -505,6 +519,9 @@ export function adminRoutes(
       claudeAliases?: unknown;
       scopes?: unknown;
       expiresAt?: unknown;
+      maxRequestsPerDay?: unknown;
+      maxTokensPerDay?: unknown;
+      maxOutputTokens?: unknown;
     };
 
     const patch: Parameters<typeof updateGatewayKey>[2] = {};
@@ -532,6 +549,7 @@ export function adminRoutes(
     else if (Number.isFinite(Number(body.expiresAt))) patch.expiresAt = Number(body.expiresAt);
 
     try {
+      Object.assign(patch, parseGatewayLimits(body));
       const updated = normaliseKey(updateGatewayKey(cfg, name, patch));
       return c.json({
         ok: true,
@@ -542,6 +560,9 @@ export function adminRoutes(
           claudeAliases: updated.claudeAliases,
           scopes: updated.scopes,
           expiresAt: updated.expiresAt,
+          maxRequestsPerDay: updated.maxRequestsPerDay,
+          maxTokensPerDay: updated.maxTokensPerDay,
+          maxOutputTokens: updated.maxOutputTokens,
         },
       });
     } catch (err) {

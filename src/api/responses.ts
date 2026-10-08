@@ -16,6 +16,7 @@ import { displayName, type CredentialStore } from "../pool/store.js";
 import type { RequestLogEntry } from "../pool/types.js";
 import { parseSSE } from "../upstream/client.js";
 import { errorResponse } from "./errors.js";
+import { deferGatewayUsage, settleGatewayUsage } from "./budget.js";
 
 const log = createLogger({ mod: "responses" });
 
@@ -38,6 +39,11 @@ export function responsesHandler(cfg: Config, router: Router, store: CredentialS
       return errorResponse(c, 400, "`model` is required and must be a string.", "invalid_request_error", "invalid_parameter");
     }
     const body = raw as Record<string, unknown> & { model: string };
+    const outputLimit = c.get("gatewayKey")?.maxOutputTokens ?? null;
+    if (outputLimit !== null) {
+      return errorResponse(c, 400, "The Codex Responses transport does not support this key's output-token limit.",
+        "invalid_request_error", "output_limit_unsupported");
+    }
 
     const key = c.get("gatewayKey");
     if (key && !keyAllows(key, model)) {
@@ -128,6 +134,9 @@ export function responsesHandler(cfg: Config, router: Router, store: CredentialS
 
       const usage = (final?.usage ?? {}) as ResponsesUsage;
       const total = usage.total_tokens ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+      const reported = usage.total_tokens ?? (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number"
+        ? usage.input_tokens + usage.output_tokens : null);
+      settleGatewayUsage(c, store, reported !== null && Number.isSafeInteger(reported) && reported >= 0 ? reported : null);
       const ok = final !== null && failed === null;
       writeLog({
         credentialId: credential.id,
@@ -153,6 +162,7 @@ export function responsesHandler(cfg: Config, router: Router, store: CredentialS
     if (streaming) {
       // One branch goes to the client byte-for-byte, the other is only metered.
       const [toClient, toMeter] = response.body.tee();
+      deferGatewayUsage(c);
       void settle(toMeter);
       return new Response(toClient, {
         status: 200,
