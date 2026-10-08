@@ -6,6 +6,91 @@ import {
 } from "./core.js";
 import { icon } from "./icons.js";
 
+/* --------------------------------------------------------------- models */
+
+export const models = {
+  title: "Models",
+  subtitle: "Live models discovered across your provider pool",
+
+  mount(host) {
+    host.innerHTML = `<div class="page">
+      <div class="toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <input id="model-search" placeholder="Search model ids…" style="flex:1 1 16rem" />
+        <select id="model-provider" style="width:auto"><option value="">All providers</option></select>
+        <select id="model-cap" style="width:auto">
+          <option value="">Any capability</option>
+          <option value="vision">Vision</option>
+          <option value="tools">Tools</option>
+          <option value="reasoning">Reasoning</option>
+        </select>
+        <button class="btn-sm" id="model-refresh">${icon("refresh", 14)} Refresh</button>
+      </div>
+      <div class="grid-4" id="model-summary"></div>
+      ${card("Discovered model catalogue", "bolt", `<div class="table-wrap"><table>
+        <thead><tr><th>Model</th><th>Providers</th><th>Capabilities</th><th>Context</th><th>Availability</th><th></th></tr></thead>
+        <tbody id="model-rows"></tbody>
+      </table></div>`, "", "Facts come from provider discovery where available; unknown means the provider has not published that fact.")}
+    </div>`;
+
+    let catalogue = [];
+    const search = () => host.querySelector("#model-search").value.trim().toLowerCase();
+    const capability = () => host.querySelector("#model-cap").value;
+
+    const renderRows = () => {
+      const provider = host.querySelector("#model-provider").value;
+      const q = search();
+      const cap = capability();
+      const rows = catalogue.filter((m) => {
+        if (q && !m.id.toLowerCase().includes(q)) return false;
+        if (provider && !m.providers.includes(provider)) return false;
+        if (cap && m.capabilities?.[cap] !== true) return false;
+        return true;
+      });
+      host.querySelector("#model-rows").innerHTML = rows.length
+        ? rows.map((m) => {
+            const c = m.capabilities ?? {};
+            const labels = ["vision", "tools", "reasoning"]
+              .filter((name) => c[name] === true)
+              .map((name) => `<span class="tag active">${name}</span>`).join(" ");
+            return `<tr>
+              <td><code>${esc(m.id)}</code>${m.virtual ? ` <span class="pill">policy</span>` : ""}</td>
+              <td class="dim">${esc(m.providers.join(", ") || "—")}</td>
+              <td>${labels || `<span class="dim">unknown</span>`}</td>
+              <td>${c.contextWindow ? compact(c.contextWindow) : `<span class="dim">unknown</span>`}</td>
+              <td>${m.available ? `<span class="tag active"><i></i>ready</span>` : `<span class="tag cooling"><i></i>unavailable</span>`}</td>
+              <td style="text-align:right"><a class="btn btn-sm" href="#/chat?model=${encodeURIComponent(m.id)}">Open in Chat</a></td>
+            </tr>`;
+          }).join("")
+        : emptyRow(6, "No models match these filters.");
+    };
+
+    const render = async () => {
+      try {
+        const data = await get("/admin/models/catalogue?all=1");
+        catalogue = data.models ?? [];
+        const providers = [...new Set(catalogue.flatMap((m) => m.providers ?? []))].sort();
+        host.querySelector("#model-provider").innerHTML = `<option value="">All providers</option>` +
+          providers.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+        host.querySelector("#model-summary").innerHTML = `
+          <div class="stat accent"><div class="stat-value">${num(catalogue.filter((m) => !m.virtual).length)}</div><div class="stat-label">Models</div></div>
+          <div class="stat ok"><div class="stat-value">${num(catalogue.filter((m) => m.available && !m.virtual).length)}</div><div class="stat-label">Ready</div></div>
+          <div class="stat"><div class="stat-value">${num(providers.length)}</div><div class="stat-label">Providers</div></div>
+          <div class="stat ${data.hiddenPaid ? "warn" : ""}"><div class="stat-value">${num(data.hiddenPaid ?? 0)}</div><div class="stat-label">Paid hidden</div></div>`;
+        renderRows();
+      } catch (err) {
+        toast(err.message, "bad");
+      }
+    };
+
+    host.querySelector("#model-search").addEventListener("input", renderRows);
+    host.querySelector("#model-provider").addEventListener("change", renderRows);
+    host.querySelector("#model-cap").addEventListener("change", renderRows);
+    host.querySelector("#model-refresh").addEventListener("click", render);
+    render();
+    return {};
+  },
+};
+
 /* --------------------------------------------------------------- monitor */
 
 export const monitor = {

@@ -205,7 +205,7 @@ export const auths = {
       ${card("Connections", "hub",
         `<div class="table-wrap"><table>
           <thead><tr>
-            <th>Name</th><th>Provider</th><th>State</th>
+             <th>Name</th><th>Provider</th><th>State</th><th>Models</th>
             <th style="text-align:right">Requests</th>
             <th style="text-align:right">Tokens</th>
             <th>Resets</th><th>Last error</th><th>Test</th><th></th>
@@ -233,15 +233,17 @@ export const auths = {
               <div style="font-weight:500">${esc(c.name)}</div>
               <div style="font-size:11px;color:var(--text-faint)">#${c.id} · ${esc(c.emailMasked)}</div>
             </td>
-            <td><span class="pill">${esc(c.providerType || (c.accountId.startsWith("gemini_") ? "gemini" : "codex"))}</span></td>
-            <td>${stateTag(c.effectiveState)}</td>
+             <td><span class="pill">${esc(c.providerType || (c.accountId.startsWith("gemini_") ? "gemini" : "codex"))}</span></td>
+             <td>${stateTag(c.effectiveState)}</td>
+             <td><span class="pill">${c.customModels?.length ?? 0}</span></td>
             <td class="num">${num(c.requestCount)}</td>
             <td class="num">${compact(c.tokenCount)}</td>
             <td class="mono" id="quota-${c.id}">${quotaCell(c, st.now)}</td>
             <td class="mono" style="color:var(--bad)">${esc(c.lastError ?? "—")}</td>
             <td id="test-${c.id}" class="mono" style="white-space:nowrap">${resultCell(c.id)}</td>
             <td style="text-align:right;white-space:nowrap">
-              <button class="btn-sm" data-test="${c.id}" title="Send a real 'hi' through this Auth">${icon("play", 14)}</button>
+               <button class="btn-sm" data-details="${c.id}" title="View discovered models and capabilities">${icon("search", 14)}</button>
+               <button class="btn-sm" data-test="${c.id}" title="Send a real 'hi' through this Auth">${icon("play", 14)}</button>
               <button class="btn-sm" data-quota="${c.id}" title="Re-check quota: what has refilled, and when the rest does">${icon("refresh", 14)}</button>
               <button class="btn-sm" data-rename="${c.id}" title="Rename">${icon("edit", 14)}</button>
               ${c.effectiveState === "dead"
@@ -250,7 +252,7 @@ export const auths = {
               <button class="btn-sm btn-danger" data-remove="${c.id}" title="Remove">${icon("trash", 14)}</button>
             </td>
           </tr>`).join("")
-        : emptyRow(9, "No Auths yet. Add one to start routing.");
+         : emptyRow(10, "No Auths yet. Add one to start routing.");
     };
 
     /** Live quota readings, keyed by credential id. Filled by the refresh button. */
@@ -371,16 +373,42 @@ export const auths = {
 
     host.addEventListener("click", async (e) => {
       const btn = e.target.closest(
-        "button[data-rename],button[data-revive],button[data-cool],button[data-remove],button[data-test],button[data-quota]",
+        "button[data-details],button[data-rename],button[data-revive],button[data-cool],button[data-remove],button[data-test],button[data-quota]",
       );
       if (!btn) return;
       const id = Number(
-        btn.dataset.rename ?? btn.dataset.revive ?? btn.dataset.cool ?? btn.dataset.remove ??
+          btn.dataset.details ?? btn.dataset.rename ?? btn.dataset.revive ?? btn.dataset.cool ?? btn.dataset.remove ??
           btn.dataset.test ?? btn.dataset.quota,
       );
       const cred = ctx.status?.credentials.find((c) => c.id === id);
 
       try {
+        if (btn.dataset.details) {
+          const models = cred?.customModels ?? [];
+          const metadata = cred?.modelMetadata ?? {};
+          await modal({
+            title: `${cred?.name ?? `Connection ${id}`} — model health`,
+            width: "58rem",
+            body: `<div class="note ${cred?.needsRefresh ? "warn" : "ok"}">
+              ${icon(cred?.needsRefresh ? "warning" : "check", 16)}
+              <span>${cred?.needsRefresh ? "This connection needs a token refresh before its next request." : "The stored token is currently usable."}</span>
+            </div>
+            <div class="table-wrap" style="max-height:48vh;overflow:auto;margin-top:12px"><table>
+              <thead><tr><th>Model</th><th>Vision</th><th>Tools</th><th>Reasoning</th><th>Context</th><th>Discovery</th></tr></thead>
+              <tbody>${models.length ? models.map((model) => {
+                const m = metadata[model] ?? {};
+                return `<tr><td class="mono">${esc(model)}</td>
+                  <td>${m.vision === true ? `<span class="tag active">yes</span>` : m.vision === false ? `<span class="tag">no</span>` : `<span class="dim">unknown</span>`}</td>
+                  <td>${m.tools === true ? `<span class="tag active">yes</span>` : m.tools === false ? `<span class="tag">no</span>` : `<span class="dim">unknown</span>`}</td>
+                  <td>${m.reasoning === true ? `<span class="tag active">yes</span>` : m.reasoning === false ? `<span class="tag">no</span>` : `<span class="dim">unknown</span>`}</td>
+                  <td>${m.contextWindow ? compact(m.contextWindow) : `<span class="dim">unknown</span>`}</td>
+                  <td class="dim">${m.discoveredAt ? relative(m.discoveredAt) : "not discovered"}</td></tr>`;
+              }).join("") : emptyRow(6, "No discovered model catalogue. Run provider discovery.")}</tbody>
+            </table></div>`,
+            footer: `<button data-close>Close</button>`,
+          });
+          return;
+        }
         if (btn.dataset.test) {
           await runTest(id);
           return;
@@ -742,7 +770,7 @@ export const keys = {
     host.innerHTML = `<div class="page">
       ${card("Gateway keys", "key",
         `<div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>Kind</th><th>Key</th><th>Models</th><th></th></tr></thead>
+           <thead><tr><th>Name</th><th>Kind</th><th>Key</th><th>Models</th><th>Scopes</th><th>Expires</th><th></th></tr></thead>
           <tbody id="key-rows"></tbody>
         </table></div>
         <div class="note" style="margin-top:12px">${icon("shield", 16)}
@@ -776,6 +804,9 @@ export const keys = {
           : data.key.allowedModels,
       );
       let kind = data.key.kind;
+      const allScopes = ["inference", "models:read", "logs:read", "settings:write", "admin"];
+      const scopes = new Set(data.key.scopes ?? allScopes);
+      const expiresAt = data.key.expiresAt ?? null;
 
       // Assignments start from what the server reported and are edited here.
       const aliases = {};
@@ -840,11 +871,25 @@ export const keys = {
               <option value="standard" ${kind === "standard" ? "selected" : ""}>Standard — works with any OpenAI-compatible client</option>
               <option value="claude" ${kind === "claude" ? "selected" : ""}>Claude — /v1/messages only, models renamed to Claude's</option>
             </select>
-            <span class="help">A Claude key hides your real model ids and presents them under
+           <span class="help">A Claude key hides your real model ids and presents them under
               Claude's own names, which is the only form the Claude desktop app accepts. Real
               Claude models from your providers are hidden, since those are the paid ones.</span>
-          </div>
-          <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">
+           </div>
+           <div class="grid-2">
+             <div class="field">
+               <label>Permissions</label>
+               <div class="check-grid" id="k-scopes">
+                 ${allScopes.map((scope) => `<label class="check"><input type="checkbox" data-scope="${scope}" ${scopes.has(scope) ? "checked" : ""}> <span>${scope}</span></label>`).join("")}
+               </div>
+               <span class="help">Inference is required for model requests. Admin is required for dashboard administration.</span>
+             </div>
+             <div class="field">
+               <label>Expiration</label>
+               <input id="k-expires" type="datetime-local" value="${expiresAt ? new Date(expiresAt * 1000).toISOString().slice(0, 16) : ""}" />
+               <span class="help">Leave blank for a key with no expiration.</span>
+             </div>
+           </div>
+           <div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">
             <input id="k-search" placeholder="Search models…" style="flex:1 1 12rem;min-width:10rem" />
             <select id="k-provider" style="flex:0 0 auto">
               <option value="">All providers</option>
@@ -938,12 +983,16 @@ export const keys = {
           bindTicks();
           bindAliases();
 
-          root.querySelector("#k-kind").addEventListener("change", (e) => {
+           root.querySelector("#k-kind").addEventListener("change", (e) => {
             kind = e.target.value;
             // Redraw so the pairing column and the disabled rows follow the
             // kind without needing a save round trip.
-            redraw();
-          });
+             redraw();
+           });
+
+           root.querySelectorAll("[data-scope]").forEach((cb) => cb.addEventListener("change", () => {
+             cb.checked ? scopes.add(cb.dataset.scope) : scopes.delete(cb.dataset.scope);
+           }));
 
           root.querySelector("#k-search").addEventListener("input", applyFilters);
 
@@ -1046,8 +1095,12 @@ export const keys = {
               // working as models are added to the pool later.
               allowedModels:
                 allowed.size === data.models.length ? null : [...allowed],
-              // Only meaningful for a Claude key, and harmless otherwise.
-              claudeAliases: aliases,
+               // Only meaningful for a Claude key, and harmless otherwise.
+               claudeAliases: aliases,
+               scopes: [...scopes],
+               expiresAt: root.querySelector("#k-expires").value
+                 ? Math.floor(new Date(root.querySelector("#k-expires").value).getTime() / 1000)
+                 : null,
             }),
           );
         },
@@ -1074,11 +1127,16 @@ export const keys = {
               k.allowedModels === null || k.allowedModels === undefined
                 ? `<span class="dim">all</span>`
                 : `${k.allowedModels.length} selected`;
-            return `<tr>
+             const scopeNames = (k.scopes ?? []).join(", ");
+             const expires = k.expiresAt ? new Date(k.expiresAt * 1000).toLocaleDateString() : "never";
+             const expired = k.expiresAt && k.expiresAt <= Math.floor(Date.now() / 1000);
+             return `<tr>
               <td style="font-weight:500">${esc(k.name)}</td>
               <td><span class="pill ${claude ? "pill-accent" : ""}">${claude ? "Claude" : "standard"}</span></td>
               <td class="secret">${shown ? esc(k.key) : "•".repeat(28)}</td>
               <td>${scope}</td>
+              <td class="dim" title="${esc(scopeNames)}">${esc(scopeNames || "full access")}</td>
+              <td class="${expired ? "bad" : "dim"}">${esc(expires)}</td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn-sm" data-settings="${esc(k.name)}" title="API settings">${icon("settings", 14)}</button>
                 <button class="btn-sm" data-reveal="${esc(k.name)}">${icon(shown ? "eyeOff" : "eye", 14)}</button>
@@ -1087,7 +1145,7 @@ export const keys = {
               </td>
             </tr>`;
           }).join("")
-        : emptyRow(5, "No keys configured.");
+         : emptyRow(7, "No keys configured.");
 
       host.querySelectorAll("[data-settings]").forEach((b) =>
         b.addEventListener("click", () => openSettings(b.dataset.settings)),

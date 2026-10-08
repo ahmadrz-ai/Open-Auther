@@ -67,6 +67,9 @@ The project already provides a local OpenAI-compatible gateway with:
 
 ## Phase 6 — API and dashboard
 
+- [x] Add API-key scope and expiration controls to the dashboard.
+- [x] Add a live model explorer with provider and capability filters.
+- [x] Add connection model-health details and troubleshooting actions.
 - [ ] Improve Responses API fidelity, structured output, and prompt caching.
 - [ ] Add supported embeddings, audio, files, and batch endpoints where a
       provider adapter can implement them correctly.

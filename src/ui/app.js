@@ -17,6 +17,7 @@ const NAV = [
   { id: "chat", icon: "chat", label: "Chat", page: chatPage },
   { id: "client", icon: "link", label: "Point Your Client", page: pool.client },
   { id: "keys", icon: "key", label: "API Keys", page: pool.keys },
+  { id: "models", icon: "bolt", label: "Models", page: ops.models },
 
   { group: "Providers & Connections" },
   { id: "auths", icon: "hub", label: "Connections", page: pool.auths, badge: "auths" },

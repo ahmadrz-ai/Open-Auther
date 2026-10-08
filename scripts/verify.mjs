@@ -153,6 +153,12 @@ try {
   check("vision read from input modalities", mv?.vision === true);
   check("context window read from the listing", mv?.contextWindow === 128000);
 
+  const catalogue = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/models/catalogue?all=1`, { headers: H })
+  ).json();
+  const catalogueVision = catalogue.models?.find((m) => m.id === "mock-vision");
+  check("admin catalogue includes resolved capabilities", catalogueVision?.capabilities?.vision === true);
+
   // ------------------------------------------------------ OpenAI surface
   console.log("\nOpenAI surface");
   received.length = 0;
@@ -362,6 +368,7 @@ try {
       body: JSON.stringify({ name: "verify-scoped", scopes: ["inference"] }),
     })
   ).json();
+  check("new keys persist their scopes", scoped.key?.scopes?.includes("inference") && !scoped.key?.scopes?.includes("admin"));
   const SK = {
     authorization: `Bearer ${scoped.key?.key}`,
     "content-type": "application/json",
@@ -376,6 +383,7 @@ try {
       body: JSON.stringify({ name: "verify-expired", expiresAt: 1 }),
     })
   ).json();
+  check("new keys persist expiration", expired.key?.expiresAt === 1);
   const expiredRes = await fetch(`http://127.0.0.1:${GW}/v1/chat/completions`, {
     method: "POST",
     headers: {
