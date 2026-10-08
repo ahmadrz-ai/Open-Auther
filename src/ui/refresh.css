@@ -219,7 +219,7 @@ td .btn-sm { min-height: 29px; padding: 6px 8px; }
 .chat-page .screen-hero { padding: 0; }
 .chat-page .screen-hero h2 { font-size: 25px; }
 .chat-page .screen-emblem { width: 56px; height: 56px; border-radius: 17px; }
-.chat-shell { flex: 1; }
+.chat-shell { flex: 1 1 auto; height: auto; min-height: 0; }
 .cv-page { margin-bottom: 24px; }
 .chat-shell { grid-template-columns: 232px minmax(0, 1fr); background: var(--surface); border: 1px solid var(--border-soft); border-radius: 20px; overflow: hidden; }
 .chat-list { background: #101722; border-color: var(--border-soft); }
