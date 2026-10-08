@@ -765,7 +765,14 @@ export function adminRoutes(
         buildCatalogue(store.all(), { freeOnly: false }).length -
         buildCatalogue(store.all(), { freeOnly: cfg.freeModelsOnly }).length,
       byProvider,
-      models: entries,
+      models: entries.map((entry) => ({
+        ...entry,
+        capabilities: capabilitiesFor(
+          entry.id,
+          cfg.modelCapabilities,
+          mergeDiscovered(store.all().map((cred) => cred.modelMetadata), entry.id),
+        ),
+      })),
     });
   });
 
