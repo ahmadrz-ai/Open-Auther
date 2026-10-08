@@ -14,6 +14,7 @@ import {
   filterForKey,
   isRealClaudeModel,
   keyAllows,
+  keyHasScope,
   normaliseKey,
   resolveClaudeAlias,
   tierId,
@@ -39,6 +40,27 @@ describe("recognising a real Claude model", () => {
     expect(isRealClaudeModel("gpt-5.6-terra")).toBe(false);
     expect(isRealClaudeModel("gemini-3.8-flash-tiered")).toBe(false);
     expect(isRealClaudeModel("qwen/qwen3.8-max:free")).toBe(false);
+  });
+});
+
+describe("gateway key scopes", () => {
+  it("keeps older keys fully compatible", () => {
+    const key = normaliseKey({ name: "legacy", key: "secret" });
+    expect(keyHasScope(key, "inference")).toBe(true);
+    expect(keyHasScope(key, "admin")).toBe(true);
+    expect(key.expiresAt).toBeNull();
+  });
+
+  it("preserves explicit scope restrictions and expiry", () => {
+    const key = normaliseKey({
+      name: "client",
+      key: "secret",
+      scopes: ["inference", "models:read"],
+      expiresAt: 123,
+    });
+    expect(keyHasScope(key, "inference")).toBe(true);
+    expect(keyHasScope(key, "admin")).toBe(false);
+    expect(key.expiresAt).toBe(123);
   });
 });
 

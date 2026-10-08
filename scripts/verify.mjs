@@ -174,6 +174,7 @@ try {
     }),
   });
   check("chat/completions answers", chat.status === 200, `HTTP ${chat.status}`);
+  check("responses carry a request correlation id", Boolean(chat.headers.get("x-request-id")));
   const sentContent = received[0]?.messages?.find((m) => m.role === "user")?.content;
   check(
     "the image reaches the upstream",
@@ -353,6 +354,37 @@ try {
     typeof probe.ok === "boolean" && typeof probe.latencyMs === "number",
     `ok=${probe.ok}`,
   );
+
+  const scoped = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/keys`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "verify-scoped", scopes: ["inference"] }),
+    })
+  ).json();
+  const SK = {
+    authorization: `Bearer ${scoped.key?.key}`,
+    "content-type": "application/json",
+  };
+  const scopedModels = await fetch(`http://127.0.0.1:${GW}/v1/models`, { headers: SK });
+  check("scoped keys can be denied model discovery", scopedModels.status === 403, `HTTP ${scopedModels.status}`);
+
+  const expired = await (
+    await fetch(`http://127.0.0.1:${GW}/admin/keys`, {
+      method: "POST",
+      headers: H,
+      body: JSON.stringify({ name: "verify-expired", expiresAt: 1 }),
+    })
+  ).json();
+  const expiredRes = await fetch(`http://127.0.0.1:${GW}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${expired.key?.key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "mock-vision", messages: [{ role: "user", content: "no" }] }),
+  });
+  check("expired keys are rejected", expiredRes.status === 401, `HTTP ${expiredRes.status}`);
 
   const ct = await (
     await fetch(`http://127.0.0.1:${GW}/v1/messages/count_tokens`, {

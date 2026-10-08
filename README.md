@@ -362,6 +362,12 @@ AI_AUTHER_HOST        Bind address (default: 127.0.0.1)
 AI_AUTHER_API_KEY     Override the gateway API key
 AI_AUTHER_ROTATION    fill_first | round_robin | least_used | random
 AI_AUTHER_LOG_LEVEL   debug | info | warn | error
+AI_AUTHER_MAX_REQUEST_BYTES
+                       Maximum JSON request size (default: 16 MiB)
+AI_AUTHER_RATE_LIMIT_PER_MINUTE
+                       Per-client/IP refill rate (default: 120; 0 disables)
+AI_AUTHER_RATE_LIMIT_BURST
+                       Initial per-client/IP burst (default: 30)
 AI_AUTHER_MODEL_SYNC_HOURS
                       How often to re-read provider model catalogues
                       (default: 6; 0 disables the automatic sweep)
@@ -380,12 +386,30 @@ http://127.0.0.1:8787/v1
 
 Treat the data directory as sensitive. It can contain OAuth tokens and gateway credentials.
 
+Gateway keys can be scoped and expired. The available scopes are `inference`,
+`models:read`, `logs:read`, `settings:write`, and `admin`. Existing keys without
+an explicit scope list retain full compatibility. New client keys can be created
+through the dashboard or API with a restricted list, for example:
+
+```json
+{
+  "name": "coding-client",
+  "scopes": ["inference", "models:read"],
+  "expiresAt": 1794000000
+}
+```
+
+Every response carries an `x-request-id` correlation header. Clients may send a
+safe `x-request-id` value and the gateway will reuse it in logs and the response.
+
 ## Development
 
 ```bash
 npm install
+npm run typecheck
 npm run build
 npm run test
+npm run verify
 npm run pack:check
 ```
 

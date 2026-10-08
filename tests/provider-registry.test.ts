@@ -65,6 +65,29 @@ describe("ProviderRegistry", () => {
     expect(() => registry.register(plugin("not a provider"))).toThrow(/id/i);
   });
 
+  it("accepts validated auth, discovery, health, and transport adapters", () => {
+    const registry = new ProviderRegistry();
+    const entry: ProviderPlugin = {
+      ...plugin("adapter-example"),
+      auth: [{ id: "api-key", kind: "api_key" }],
+      discovery: { discover: async () => [] },
+      health: { check: async () => ({ ok: true }) },
+      transport: {
+        call: async () => ({ ok: false, status: 501, message: "test" }),
+      },
+    };
+    registry.register(entry);
+    expect(registry.get("adapter-example")?.transport).toBe(entry.transport);
+  });
+
+  it("rejects an auth adapter without an id", () => {
+    const registry = new ProviderRegistry();
+    expect(() => registry.register({
+      ...plugin("bad-adapter"),
+      auth: [{ id: "", kind: "api_key" }],
+    })).toThrow(/auth adapter/i);
+  });
+
   it("unregisters a provider and reports whether it existed", () => {
     const registry = new ProviderRegistry();
     registry.register(plugin("example"));

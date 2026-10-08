@@ -9,7 +9,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
 import type { Config } from "../config.js";
-import { normaliseKey, type GatewayKey } from "../core/keys.js";
+import { keyHasScope, normaliseKey, type GatewayKey, type GatewayScope } from "../core/keys.js";
 import { errorResponse } from "./errors.js";
 
 declare module "hono" {
@@ -17,6 +17,7 @@ declare module "hono" {
     clientName: string;
     /** The matched key, so routes can apply its model policy. */
     gatewayKey: GatewayKey;
+    requestId: string;
   }
 }
 
@@ -83,8 +84,42 @@ export function gatewayAuth(cfg: Config) {
       );
     }
 
+    const normalised = normaliseKey(key);
+    if (typeof normalised.expiresAt === "number" && normalised.expiresAt <= Math.floor(Date.now() / 1000)) {
+      return errorResponse(
+        c,
+        401,
+        "API key has expired.",
+        "invalid_request_error",
+        "expired_api_key",
+        { "www-authenticate": "Bearer" },
+      );
+    }
+
+    const path = new URL(c.req.url).pathname;
+    const scope: GatewayScope = path.startsWith("/admin/")
+      ? /\/logs(?:\/|$)|\/stats(?:\/|$)|\/events(?:\/|$)|\/health\/detail|\/runtime/.test(path)
+        ? "logs:read"
+        : /\/settings(?:\/|$)/.test(path) && c.req.method !== "GET"
+          ? "settings:write"
+          : /\/models(?:\/|$)/.test(path) && c.req.method === "GET"
+            ? "models:read"
+            : "admin"
+      : c.req.method === "GET" && /\/models(?:\/|$)/.test(path)
+        ? "models:read"
+        : "inference";
+    if (!keyHasScope(normalised, scope)) {
+      return errorResponse(
+        c,
+        403,
+        `This API key does not have the ${scope} scope.`,
+        "invalid_request_error",
+        "insufficient_scope",
+      );
+    }
+
     c.set("clientName", key.name);
-    c.set("gatewayKey", normaliseKey(key));
+    c.set("gatewayKey", normalised);
     await next();
   };
 }
