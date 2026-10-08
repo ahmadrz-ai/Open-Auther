@@ -12,12 +12,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { registerSecret, type LogLevel } from "./logging.js";
 import { coerceCapabilities, type ModelCapabilities } from "./core/capabilities.js";
-import type { GatewayKey } from "./core/keys.js";
+import type { GatewayKey, GatewayScope, KeyKind } from "./core/keys.js";
 
 export type RotationStrategy = "fill_first" | "round_robin" | "least_used" | "random";
 
 // The key shape lives in core/keys.ts, next to the policy that acts on it.
-export type { GatewayKey, KeyKind } from "./core/keys.js";
+export type { GatewayKey, GatewayScope, KeyKind } from "./core/keys.js";
 
 /**
  * Caveman connects to any OpenAI-compatible endpoint to summarise oversized
@@ -86,6 +86,12 @@ export interface Config {
   refreshSkewSeconds: number;
   /** Upstream request timeout in milliseconds. */
   requestTimeoutMs: number;
+  /** Maximum advertised HTTP request size accepted by the gateway. */
+  maxRequestBytes: number;
+  /** Requests allowed per minute for each authenticated client/IP bucket. */
+  rateLimitPerMinute: number;
+  /** Initial burst capacity for each authenticated client/IP bucket. */
+  rateLimitBurst: number;
 
   upstreamBaseUrl: string;
   /** Codex endpoint for ChatGPT OAuth credentials. Separate on purpose. */
@@ -185,6 +191,9 @@ const DEFAULTS = {
   defaultCooldownSeconds: 300,
   refreshSkewSeconds: 120,
   requestTimeoutMs: 600_000,
+  maxRequestBytes: 16 * 1024 * 1024,
+  rateLimitPerMinute: 120,
+  rateLimitBurst: 30,
   /**
    * Where API-key credentials go (platform keys, custom OpenAI-compatible
    * providers). ChatGPT OAuth credentials do NOT use this — see
@@ -356,6 +365,18 @@ export function loadConfig(): Config {
       "AI_AUTHER_TIMEOUT_MS",
       file.requestTimeoutMs ?? DEFAULTS.requestTimeoutMs,
     ),
+    maxRequestBytes: envInt(
+      "AI_AUTHER_MAX_REQUEST_BYTES",
+      file.maxRequestBytes ?? DEFAULTS.maxRequestBytes,
+    ),
+    rateLimitPerMinute: envInt(
+      "AI_AUTHER_RATE_LIMIT_PER_MINUTE",
+      file.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute,
+    ),
+    rateLimitBurst: envInt(
+      "AI_AUTHER_RATE_LIMIT_BURST",
+      file.rateLimitBurst ?? DEFAULTS.rateLimitBurst,
+    ),
 
     upstreamBaseUrl: process.env.AI_AUTHER_UPSTREAM ?? file.upstreamBaseUrl ?? DEFAULTS.upstreamBaseUrl,
     codexBaseUrl:
@@ -390,6 +411,9 @@ export function loadConfig(): Config {
 
   if (cfg.maxAttempts < 1) throw new Error("maxAttempts must be at least 1");
   if (cfg.modelSyncHours < 0) throw new Error("modelSyncHours must be 0 or more");
+  if (cfg.maxRequestBytes < 1) throw new Error("maxRequestBytes must be at least 1");
+  if (cfg.rateLimitPerMinute < 0) throw new Error("rateLimitPerMinute must be 0 or more");
+  if (cfg.rateLimitBurst < 1) throw new Error("rateLimitBurst must be at least 1");
 
   // Register every gateway key so it can never appear in a log line.
   for (const k of cfg.gatewayKeys) registerSecret(k.key);
@@ -513,7 +537,8 @@ export function updateModelCapabilities(cfg: Config, model: string, raw: unknown
 export function addGatewayKey(
   cfg: Config,
   name: string,
-  kind: "standard" | "claude" = "standard",
+  kind: KeyKind = "standard",
+  options: { scopes?: GatewayScope[]; expiresAt?: number | null } = {},
 ): GatewayKey {
   const label = name.trim() || `key-${cfg.gatewayKeys.length + 1}`;
   if (cfg.gatewayKeys.some((k) => k.name === label)) {
@@ -527,6 +552,8 @@ export function addGatewayKey(
     // someone narrows it, which is the least surprising default.
     allowedModels: null,
     ...(kind === "claude" ? { claudeAliases: {} } : {}),
+    ...(options.scopes ? { scopes: [...options.scopes] } : {}),
+    ...(options.expiresAt !== undefined ? { expiresAt: options.expiresAt } : {}),
   };
   registerSecret(key.key);
   persistConfig(cfg, { gatewayKeys: [...cfg.gatewayKeys, key] });
@@ -547,6 +574,8 @@ export function updateGatewayKey(
     kind?: "standard" | "claude";
     allowedModels?: string[] | null;
     claudeAliases?: Record<string, string>;
+    scopes?: GatewayScope[];
+    expiresAt?: number | null;
   },
 ): GatewayKey {
   const existing = cfg.gatewayKeys.find((k) => k.name === name);
@@ -557,6 +586,8 @@ export function updateGatewayKey(
     ...(patch.kind ? { kind: patch.kind } : {}),
     ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels } : {}),
     ...(patch.claudeAliases !== undefined ? { claudeAliases: patch.claudeAliases } : {}),
+    ...(patch.scopes !== undefined ? { scopes: [...patch.scopes] } : {}),
+    ...(patch.expiresAt !== undefined ? { expiresAt: patch.expiresAt } : {}),
   };
 
   const next = cfg.gatewayKeys.map((k) => (k.name === name ? updated : k));

@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db.js";
 import { DatabaseSync } from "../src/sqlite.js";
-import { inspectStorage, SCHEMA_VERSION } from "../src/storage.js";
+import { inspectStorage, openStorage, SCHEMA_VERSION } from "../src/storage.js";
 
 describe("local-first storage", () => {
+  it("exposes a lifecycle adapter around SQLite", () => {
+    const storage = openStorage(":memory:");
+    expect(storage.health().healthy).toBe(true);
+    expect(storage.path).toBe(":memory:");
+    storage.close();
+  });
   it("opens an idempotent database with healthy migration state", () => {
     const dir = mkdtempSync(join(tmpdir(), "open-auther-storage-"));
     const path = join(dir, "gateway.sqlite");

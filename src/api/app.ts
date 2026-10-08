@@ -25,6 +25,8 @@ import { CLAUDE_TIERS, keyAllows, tierId } from "../core/keys.js";
 import { errorResponse } from "./errors.js";
 import { LoginSessions } from "./oauth.js";
 import { checkForUpdate } from "../core/update.js";
+import { requestIdMiddleware, requestSizeLimit } from "./request.js";
+import { rateLimitMiddleware } from "./limits.js";
 
 const log = createLogger({ mod: "http" });
 
@@ -87,6 +89,10 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
   const app = new Hono();
   const router = new Router(cfg, store);
 
+  app.use("*", requestIdMiddleware());
+  app.use("/v1/*", requestSizeLimit(cfg));
+  app.use("/admin/*", requestSizeLimit(cfg));
+
   app.use("*", async (c, next) => {
     const started = Date.now();
     await next();
@@ -97,6 +103,7 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
       status: c.res.status,
       ms: Date.now() - started,
       client: c.get("clientName") ?? null,
+      requestId: c.get("requestId") ?? null,
     });
   });
 
@@ -130,6 +137,8 @@ export function createApp(cfg: Config, store: CredentialStore, db: Database): Ho
   // --------------------------------------------------------------- authed
   app.use("/v1/*", gatewayAuth(cfg));
   app.use("/admin/*", gatewayAuth(cfg));
+  app.use("/v1/*", rateLimitMiddleware(cfg));
+  app.use("/admin/*", rateLimitMiddleware(cfg));
 
   app.get("/admin/update", async (c) => c.json(await checkForUpdate()));
 

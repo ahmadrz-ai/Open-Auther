@@ -14,7 +14,7 @@ import { serve } from "@hono/node-server";
 import packageJson from "../package.json";
 import { createApp } from "./api/app.js";
 import { loadConfig, generateGatewayKey, defaultHome, type Config } from "./config.js";
-import { now, openDatabase, type Database } from "./db.js";
+import { now, type Database } from "./db.js";
 import { configureLogging, createLogger, maskEmail } from "./logging.js";
 import { openBrowser } from "./core/login.js";
 import { BUILTIN_AUTH_ADAPTERS } from "./core/auth-adapters.js";
@@ -26,7 +26,7 @@ import { providerSummaries } from "./core/provider-registry.js";
 import { detectEndpoint } from "./upstream/detect.js";
 import { fetchAntigravityDiscovery } from "./upstream/antigravity.js";
 import { fetchCodexDiscovery } from "./upstream/codex.js";
-import { inspectStorage } from "./storage.js";
+import { inspectStorage, openStorage, type Storage } from "./storage.js";
 import { checkForUpdate, installLatestPackage } from "./core/update.js";
 import { BUILTIN_PROVIDER_REGISTRY } from "./core/providers.js";
 import { CredentialStore, DuplicateAccountError, toPublic } from "./pool/store.js";
@@ -53,17 +53,17 @@ function out(line = ""): void {
   process.stdout.write(line + "\n");
 }
 
-function bootstrap(): { cfg: Config; store: CredentialStore; db: Database } {
+function bootstrap(): { cfg: Config; store: CredentialStore; db: Database; storage: Storage } {
   const cfg = loadConfig();
   configureLogging({ level: cfg.logLevel, pretty: cfg.logPretty });
-  const db = openDatabase(cfg.dbPath);
-  return { cfg, store: new CredentialStore(db), db };
+  const storage = openStorage(cfg.dbPath);
+  return { cfg, store: new CredentialStore(storage.db), db: storage.db, storage };
 }
 
 // --------------------------------------------------------------------- serve
 
 async function cmdServe(): Promise<void> {
-  const { cfg, store, db } = bootstrap();
+  const { cfg, store, db, storage } = bootstrap();
   const app = createApp(cfg, store, db);
 
   /*
@@ -134,9 +134,15 @@ async function cmdServe(): Promise<void> {
   const shutdown = (signal: string) => {
     out(`\n${C.dim}${signal} received, shutting down.${C.reset}`);
     modelSync.stop();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      storage.close();
+      process.exit(0);
+    });
     // Do not wait forever on open SSE streams.
-    setTimeout(() => process.exit(0), 3000).unref();
+    setTimeout(() => {
+      storage.close();
+      process.exit(0);
+    }, 3000).unref();
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -946,6 +952,12 @@ function usage(): void {
     AI_AUTHER_API_KEY     Override the gateway key
     AI_AUTHER_ROTATION    fill_first | round_robin | least_used | random
     AI_AUTHER_LOG_LEVEL   debug | info | warn | error
+    AI_AUTHER_MAX_REQUEST_BYTES
+                            Maximum request body size in bytes
+    AI_AUTHER_RATE_LIMIT_PER_MINUTE
+                            Per-client/IP rate refill; 0 disables
+    AI_AUTHER_RATE_LIMIT_BURST
+                            Initial per-client/IP burst capacity
 `);
 }
 

@@ -1,5 +1,5 @@
 import type { Database } from "./db.js";
-import { SCHEMA_VERSION } from "./db.js";
+import { openDatabase, SCHEMA_VERSION } from "./db.js";
 
 export { SCHEMA_VERSION } from "./db.js";
 
@@ -11,6 +11,35 @@ export interface StorageHealth {
   foreignKeys: boolean;
   journalMode: string;
   healthy: boolean;
+}
+
+/** Public lifecycle boundary around the local persistence implementation. */
+export interface Storage {
+  readonly path: string;
+  readonly db: Database;
+  health(): StorageHealth;
+  close(): void;
+}
+
+/** SQLite storage adapter. A future shared database can implement this shape. */
+export class SqliteStorage implements Storage {
+  readonly db: Database;
+
+  constructor(readonly path: string) {
+    this.db = openDatabase(path);
+  }
+
+  health(): StorageHealth {
+    return inspectStorage(this.db, this.path);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+export function openStorage(path: string): Storage {
+  return new SqliteStorage(path);
 }
 
 function pragmaValue(db: Database, pragma: string): unknown {

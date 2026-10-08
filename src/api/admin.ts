@@ -23,7 +23,13 @@ import {
 } from "../config.js";
 import { capabilitiesFor } from "../core/capabilities.js";
 import { ensureAliases } from "../core/key-aliases.js";
-import { CLAUDE_TIERS, isRealClaudeModel, keyAllows, normaliseKey } from "../core/keys.js";
+import {
+  CLAUDE_TIERS,
+  isRealClaudeModel,
+  keyAllows,
+  normaliseKey,
+  type GatewayScope,
+} from "../core/keys.js";
 import { mergeDiscovered } from "../core/model-metadata.js";
 import { buildCatalogue, isChatModel } from "../core/catalogue.js";
 import { providerDef } from "../core/providers.js";
@@ -375,16 +381,38 @@ export function adminRoutes(
           kind: k.kind,
           allowedModels: k.allowedModels,
           claudeAliases: k.claudeAliases,
+          scopes: k.scopes,
+          expiresAt: k.expiresAt,
         };
       }),
     }),
   );
 
   app.post("/keys", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { name?: string; kind?: string };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      name?: string;
+      kind?: string;
+      scopes?: unknown;
+      expiresAt?: unknown;
+    };
     const kind = body.kind === "claude" ? "claude" : "standard";
+    const scopes = Array.isArray(body.scopes)
+      ? body.scopes
+          .map(String)
+          .filter((scope): scope is GatewayScope =>
+            ["inference", "admin", "models:read", "logs:read", "settings:write"].includes(scope),
+          )
+      : undefined;
+    const expiresAt = body.expiresAt === null
+      ? null
+      : Number.isFinite(Number(body.expiresAt))
+        ? Number(body.expiresAt)
+        : undefined;
     try {
-      return c.json({ ok: true, key: addGatewayKey(cfg, String(body.name ?? ""), kind) });
+      return c.json({
+        ok: true,
+        key: addGatewayKey(cfg, String(body.name ?? ""), kind, { scopes, expiresAt }),
+      });
     } catch (err) {
       return bad(c, err);
     }
@@ -434,7 +462,13 @@ export function adminRoutes(
     }
 
     return c.json({
-      key: { name: key.name, kind: key.kind, allowedModels: key.allowedModels },
+      key: {
+        name: key.name,
+        kind: key.kind,
+        allowedModels: key.allowedModels,
+        scopes: key.scopes,
+        expiresAt: key.expiresAt,
+      },
       models: catalogue.map((m) => ({
         id: m.id,
         providers: m.providers,
@@ -469,6 +503,8 @@ export function adminRoutes(
       kind?: string;
       allowedModels?: unknown;
       claudeAliases?: unknown;
+      scopes?: unknown;
+      expiresAt?: unknown;
     };
 
     const patch: Parameters<typeof updateGatewayKey>[2] = {};
@@ -485,6 +521,15 @@ export function adminRoutes(
         ]),
       );
     }
+    if (Array.isArray(body.scopes)) {
+      patch.scopes = body.scopes
+        .map(String)
+        .filter((scope): scope is GatewayScope =>
+          ["inference", "admin", "models:read", "logs:read", "settings:write"].includes(scope),
+        );
+    }
+    if (body.expiresAt === null) patch.expiresAt = null;
+    else if (Number.isFinite(Number(body.expiresAt))) patch.expiresAt = Number(body.expiresAt);
 
     try {
       const updated = normaliseKey(updateGatewayKey(cfg, name, patch));
@@ -495,6 +540,8 @@ export function adminRoutes(
           kind: updated.kind,
           allowedModels: updated.allowedModels,
           claudeAliases: updated.claudeAliases,
+          scopes: updated.scopes,
+          expiresAt: updated.expiresAt,
         },
       });
     } catch (err) {
@@ -679,6 +726,9 @@ export function adminRoutes(
       defaultCooldownSeconds: cfg.defaultCooldownSeconds,
       refreshSkewSeconds: cfg.refreshSkewSeconds,
       requestTimeoutMs: cfg.requestTimeoutMs,
+      maxRequestBytes: cfg.maxRequestBytes,
+      rateLimitPerMinute: cfg.rateLimitPerMinute,
+      rateLimitBurst: cfg.rateLimitBurst,
       host: cfg.host,
       port: cfg.port,
       logLevel: cfg.logLevel,

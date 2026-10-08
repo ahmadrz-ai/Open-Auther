@@ -22,6 +22,20 @@ import { qualityScore } from "./virtual.js";
 import { capabilitiesFor, type ModelCapabilities } from "./capabilities.js";
 
 export type KeyKind = "standard" | "claude";
+export type GatewayScope =
+  | "inference"
+  | "admin"
+  | "models:read"
+  | "logs:read"
+  | "settings:write";
+
+export const GATEWAY_SCOPES: readonly GatewayScope[] = [
+  "inference",
+  "admin",
+  "models:read",
+  "logs:read",
+  "settings:write",
+];
 
 export interface GatewayKey {
   /** Human label used in logs. Never the key itself. */
@@ -43,6 +57,10 @@ export interface GatewayKey {
    * because a provider added something that outranks it.
    */
   claudeAliases?: Record<string, string>;
+  /** Optional capability restrictions. Older keys retain all scopes. */
+  scopes?: GatewayScope[];
+  /** Epoch seconds after which the key is rejected. Null means no expiry. */
+  expiresAt?: number | null;
 }
 
 /**
@@ -158,6 +176,11 @@ export function keyAllows(key: GatewayKey, model: string): boolean {
   return allowed.some((m) => m.toLowerCase() === model.toLowerCase());
 }
 
+/** True when a normalised key is allowed to use an API surface. */
+export function keyHasScope(key: GatewayKey, scope: GatewayScope): boolean {
+  return (key.scopes ?? GATEWAY_SCOPES).includes(scope);
+}
+
 /** Apply a key's allowlist to a catalogue of model ids. */
 export function filterForKey(key: GatewayKey, models: string[]): string[] {
   return models.filter((m) => keyAllows(key, m));
@@ -188,5 +211,7 @@ export function normaliseKey(raw: GatewayKey): Required<Pick<GatewayKey, "kind">
     kind: raw.kind === "claude" ? "claude" : "standard",
     allowedModels: raw.allowedModels ?? null,
     claudeAliases: raw.claudeAliases ?? {},
+    scopes: raw.scopes ? [...raw.scopes] : [...GATEWAY_SCOPES],
+    expiresAt: raw.expiresAt ?? null,
   };
 }
